@@ -38,6 +38,15 @@ const codeDisplayRef = ref<HTMLElement | null>(null)
 const lineNumbersRef = ref<HTMLElement | null>(null)
 const previewExpanded = ref(false)
 
+// ==================== Preview Resize State ====================
+const previewWidth = ref(380)
+const previewHeight = ref(280)
+const isResizing = ref(false)
+const resizeStartX = ref(0)
+const resizeStartY = ref(0)
+const resizeStartW = ref(0)
+const resizeStartH = ref(0)
+
 // ==================== Typing Simulation State ====================
 const showPasteModal = ref(false)
 const pasteCode = ref('')
@@ -174,11 +183,93 @@ watch(code, (newCode) => {
   }
 })
 
+// ==================== Cursor Position ====================
+/**
+ * Insert a blinking cursor element into syntax-highlighted HTML at the given
+ * character position. Walks through the HTML string, counting only visible
+ * characters (skipping tags and decoding HTML entities as single chars).
+ */
+function insertCursorInHighlightedHTML(html: string, charPos: number): string {
+  let textCount = 0
+  let i = 0
+
+  while (i < html.length && textCount < charPos) {
+    if (html[i] === '<') {
+      // Skip HTML tag entirely
+      while (i < html.length && html[i] !== '>') i++
+      i++ // skip '>'
+    } else if (html[i] === '&') {
+      // HTML entity (e.g. &lt; &gt; &amp;) — counts as 1 visible character
+      const semiIdx = html.indexOf(';', i)
+      if (semiIdx !== -1 && semiIdx - i < 10) {
+        i = semiIdx + 1
+      } else {
+        i++
+      }
+      textCount++
+    } else {
+      i++
+      textCount++
+    }
+  }
+
+  const cursorHTML = '<span class="typing-cursor"></span>'
+  return html.substring(0, i) + cursorHTML + html.substring(i)
+}
+
+/**
+ * Compute the cursor's character position in code.value.
+ * Returns -1 when no cursor should be shown.
+ */
+const cursorPositionInCode = computed((): number => {
+  // Show cursor only while typing is active (including paused state)
+  if (typingComplete.value) return -1
+  if (!isTyping.value && !isPaused.value) return -1
+
+  if (isFrameworkMode.value) {
+    const execOrder = slotExecOrder.value
+    if (currentSlotIndex.value >= execOrder.length) return -1
+
+    const actualSlotIdx = execOrder[currentSlotIndex.value]
+    const slot = frameworkSlots.value[actualSlotIdx]
+
+    // Start with the slot's insert position in the framework base
+    let pos = slot.insertPosition
+
+    // Add lengths of completed slots whose insertPosition <= current slot's
+    const completedSlots = new Set<number>()
+    for (let e = 0; e < currentSlotIndex.value; e++) {
+      completedSlots.add(execOrder[e])
+    }
+    for (let si = 0; si < frameworkSlots.value.length; si++) {
+      if (si !== actualSlotIdx &&
+          frameworkSlots.value[si].insertPosition <= slot.insertPosition &&
+          completedSlots.has(si)) {
+        pos += frameworkSlots.value[si].content.length
+      }
+    }
+
+    pos += currentSlotCharIndex.value
+    return pos
+  }
+
+  // Normal mode: cursor is at the end of currently typed text
+  return currentIndex.value
+})
+
 // ==================== Computed Properties ====================
 const highlightedCode = computed(() => {
   try {
     const result = hljs.highlight(code.value, { language: 'xml' })
-    return result.value
+    let html = result.value
+
+    // Insert blinking cursor at the current typing position
+    const cursorPos = cursorPositionInCode.value
+    if (cursorPos >= 0) {
+      html = insertCursorInHighlightedHTML(html, cursorPos)
+    }
+
+    return html
   } catch {
     return code.value
   }
@@ -258,6 +349,38 @@ function handleTab(e: KeyboardEvent) {
 
 function togglePreview() {
   previewExpanded.value = !previewExpanded.value
+}
+
+// ==================== Preview Resize Handlers ====================
+function onResizeStart(e: MouseEvent) {
+  e.preventDefault()
+  e.stopPropagation()
+  isResizing.value = true
+  resizeStartX.value = e.clientX
+  resizeStartY.value = e.clientY
+  resizeStartW.value = previewWidth.value
+  resizeStartH.value = previewHeight.value
+  document.addEventListener('mousemove', onResizeMove)
+  document.addEventListener('mouseup', onResizeEnd)
+}
+
+function onResizeMove(e: MouseEvent) {
+  if (!isResizing.value) return
+  // Dragging from top-right corner: right means wider (deltaX > 0 means left => grow width),
+  // up means taller (deltaY < 0 => grow height).
+  // Since the panel is anchored at bottom-right, dragging left increases width and dragging up increases height.
+  const deltaX = resizeStartX.value - e.clientX
+  const deltaY = resizeStartY.value - e.clientY
+  const newWidth = Math.max(280, Math.min(resizeStartW.value + deltaX, window.innerWidth - 40))
+  const newHeight = Math.max(200, Math.min(resizeStartH.value + deltaY, window.innerHeight - 40))
+  previewWidth.value = newWidth
+  previewHeight.value = newHeight
+}
+
+function onResizeEnd() {
+  isResizing.value = false
+  document.removeEventListener('mousemove', onResizeMove)
+  document.removeEventListener('mouseup', onResizeEnd)
 }
 
 /**
@@ -1302,6 +1425,9 @@ onUnmounted(() => {
     clearTimeout(typingTimer.value)
   }
   document.removeEventListener('keydown', handleGlobalKeydown)
+  // Clean up resize listeners
+  document.removeEventListener('mousemove', onResizeMove)
+  document.removeEventListener('mouseup', onResizeEnd)
   // Clean up recording resources
   cleanupRecordingResources()
 })
@@ -1501,7 +1627,7 @@ onUnmounted(() => {
         <textarea
           ref="textareaRef"
           v-model="code"
-          class="code-input"
+          :class="['code-input', { 'hide-caret': isTyping && !typingComplete }]"
           @scroll="syncScroll"
           @keydown="handleTab"
           spellcheck="false"
@@ -1515,7 +1641,23 @@ onUnmounted(() => {
     </div>
 
     <!-- Preview Panel -->
-    <div class="preview-panel" :class="{ expanded: previewExpanded }">
+    <div
+      class="preview-panel"
+      :class="{ expanded: previewExpanded, resizing: isResizing }"
+      :style="!previewExpanded ? { width: previewWidth + 'px', height: previewHeight + 'px' } : {}"
+    >
+      <!-- Resize handle at top-left corner (visually top-left since panel is anchored bottom-right) -->
+      <div
+        v-if="!previewExpanded"
+        class="preview-resize-handle"
+        @mousedown="onResizeStart"
+      >
+        <svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2">
+          <line x1="1" y1="11" x2="11" y2="1" />
+          <line x1="5" y1="11" x2="11" y2="5" />
+          <line x1="9" y1="11" x2="11" y2="9" />
+        </svg>
+      </div>
       <div class="preview-header" @click="togglePreview">
         <div class="preview-header-left">
           <svg class="preview-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2303,6 +2445,10 @@ onUnmounted(() => {
   -webkit-text-fill-color: transparent;
 }
 
+.code-input.hide-caret {
+  caret-color: transparent;
+}
+
 .code-input::selection {
   background: rgba(203, 166, 247, 0.2);
   -webkit-text-fill-color: transparent;
@@ -2311,6 +2457,23 @@ onUnmounted(() => {
 .code-input::placeholder {
   -webkit-text-fill-color: #45475a;
   color: #45475a;
+}
+
+/* Typing Cursor */
+.typing-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.15em;
+  background-color: #f5e0dc;
+  animation: cursor-blink 1s steps(2) infinite;
+  vertical-align: text-bottom;
+  border-radius: 1px;
+  box-shadow: 0 0 4px rgba(245, 224, 220, 0.5);
+}
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
 
 /* Preview Panel */
@@ -2331,11 +2494,44 @@ onUnmounted(() => {
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+.preview-panel.resizing {
+  transition: none;
+}
+
+.preview-panel.resizing .preview-iframe {
+  pointer-events: none;
+}
+
 .preview-panel.expanded {
   width: 60vw;
   height: 70vh;
   bottom: 15vh;
   right: 20vw;
+}
+
+/* Resize handle - top-left corner of the panel (since panel is anchored bottom-right) */
+.preview-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 20px;
+  height: 20px;
+  cursor: nw-resize;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #585b70;
+  transition: color 0.2s;
+  border-radius: 12px 0 0 0;
+}
+
+.preview-resize-handle:hover {
+  color: #a6adc8;
+}
+
+.preview-resize-handle svg {
+  transform: rotate(90deg);
 }
 
 .preview-header {
