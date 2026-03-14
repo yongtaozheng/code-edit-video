@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import type { SpeedPreset } from '../types'
 import { initHighlighter } from '../utils/highlight'
 
@@ -78,6 +78,15 @@ const keyboard = useKeyboardHandler({
   closePasteModal: () => closePasteModal(),
   typeManualChunk: typingEngine.typeManualChunk,
   togglePause: typingEngine.togglePause,
+})
+
+// ==================== Recording Error Auto-dismiss ====================
+watch(recording.recordingError, (val) => {
+  if (val) {
+    setTimeout(() => {
+      recording.recordingError.value = ''
+    }, 6000)
+  }
 })
 
 // ==================== Paste Modal Functions ====================
@@ -171,6 +180,24 @@ onUnmounted(() => {
         <span class="line-count">{{ editorScroll.lineNumbers.value.length }} lines</span>
       </div>
     </header>
+
+    <!-- Recording Error Toast -->
+    <Transition name="toast">
+      <div v-if="recording.recordingError.value" class="recording-error-toast">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+          <circle cx="12" cy="12" r="10" />
+          <line x1="12" y1="8" x2="12" y2="12" />
+          <line x1="12" y1="16" x2="12.01" y2="16" />
+        </svg>
+        <span>{{ recording.recordingError.value }}</span>
+        <button class="toast-close" @click="recording.recordingError.value = ''">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+    </Transition>
 
     <!-- Typing Control Bar -->
     <TypingControlBar
@@ -631,6 +658,71 @@ onUnmounted(() => {
 .code-highlight::-webkit-scrollbar-thumb:hover,
 .code-input::-webkit-scrollbar-thumb:hover {
   background: #45475a;
+}
+
+/* Recording Error Toast */
+.recording-error-toast {
+  position: absolute;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  background: rgba(243, 139, 168, 0.15);
+  border: 1px solid rgba(243, 139, 168, 0.4);
+  border-radius: 10px;
+  color: #f38ba8;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: system-ui, sans-serif;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  max-width: 90%;
+  white-space: nowrap;
+}
+
+.recording-error-toast svg {
+  flex-shrink: 0;
+}
+
+.toast-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: #f38ba8;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+  flex-shrink: 0;
+}
+
+.toast-close:hover {
+  opacity: 1;
+}
+
+.toast-enter-active {
+  transition: all 0.3s ease-out;
+}
+
+.toast-leave-active {
+  transition: all 0.3s ease-in;
+}
+
+.toast-enter-from {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-10px);
+}
+
+.toast-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-10px);
 }
 
 /* Responsive */

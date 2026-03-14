@@ -7,6 +7,7 @@ export function useScreenRecording() {
   const isRecording = ref(false)
   const isAutoRecording = ref(false)
   const recordingDuration = ref('00:00')
+  const recordingError = ref('')
 
   // Private state
   const mediaRecorder = ref<MediaRecorder | null>(null)
@@ -85,8 +86,26 @@ export function useScreenRecording() {
     }
   }
 
+  function checkRecordingSupport(): string | null {
+    if (!window.isSecureContext) {
+      return '录屏功能需要在安全上下文（HTTPS）下使用。当前页面不是通过 HTTPS 访问的，请配置 HTTPS 后重试。'
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      return '当前浏览器不支持录屏功能（缺少 getDisplayMedia API），请使用最新版 Chrome / Edge 浏览器。'
+    }
+    return null
+  }
+
   async function startRecording(auto: boolean = false): Promise<boolean> {
     if (isRecording.value) return true
+
+    recordingError.value = ''
+
+    const supportError = checkRecordingSupport()
+    if (supportError) {
+      recordingError.value = supportError
+      return false
+    }
 
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -127,8 +146,17 @@ export function useScreenRecording() {
       recordingTimerInterval.value = setInterval(updateRecordingDuration, 1000)
 
       return true
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Screen recording permission denied or failed:', err)
+      if (err?.name === 'NotAllowedError') {
+        recordingError.value = '录屏权限被拒绝，请在弹出的权限对话框中允许屏幕共享。'
+      } else if (err?.name === 'NotFoundError') {
+        recordingError.value = '未找到可用的屏幕共享源。'
+      } else if (err?.name === 'NotSupportedError') {
+        recordingError.value = '当前环境不支持录屏，请确保使用 HTTPS 访问。'
+      } else {
+        recordingError.value = `录屏启动失败: ${err?.message || '未知错误'}`
+      }
       cleanupRecordingResources()
       return false
     }
@@ -148,6 +176,8 @@ export function useScreenRecording() {
     isRecording,
     isAutoRecording,
     recordingDuration,
+    recordingError,
+    checkRecordingSupport,
     startRecording,
     toggleManualRecording,
     stopRecordingAndDownload,
