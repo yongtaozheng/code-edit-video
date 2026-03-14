@@ -2,9 +2,8 @@ import { ref } from 'vue'
 
 type RecordingMode = 'display' | 'canvas'
 
-// Lazy-loaded html2canvas reference
-let html2canvasLib: ((element: HTMLElement, options?: any) => Promise<HTMLCanvasElement>) | null =
-  null
+// Lazy-loaded html-to-image reference (SVG foreignObject 方案，比 html2canvas 快 3-10 倍)
+let toCanvasFn: ((node: HTMLElement, options?: any) => Promise<HTMLCanvasElement>) | null = null
 
 export function useScreenRecording() {
   // ==================== Public State ====================
@@ -26,7 +25,11 @@ export function useScreenRecording() {
 
   // Canvas recording private state
   let captureTimerId: ReturnType<typeof setInterval> | null = null
+  let captureRafId: number | null = null
   let canvasEl: HTMLCanvasElement | null = null
+  let mutationObserver: MutationObserver | null = null
+  let isDirty = true
+  let lastCaptureTime = 0
 
   // ==================== Shared Helpers ====================
 
@@ -79,6 +82,16 @@ export function useScreenRecording() {
       clearInterval(captureTimerId)
       captureTimerId = null
     }
+    if (captureRafId) {
+      cancelAnimationFrame(captureRafId)
+      captureRafId = null
+    }
+    if (mutationObserver) {
+      mutationObserver.disconnect()
+      mutationObserver = null
+    }
+    isDirty = true
+    lastCaptureTime = 0
     canvasEl = null
   }
 
@@ -116,7 +129,7 @@ export function useScreenRecording() {
   /**
    * Detect the best available recording mode:
    * - 'display': getDisplayMedia (requires HTTPS / secure context)
-   * - 'canvas':  html2canvas + canvas.captureStream() (works on HTTP)
+   * - 'canvas':  html-to-image + canvas.captureStream() (works on HTTP)
    * - null:      no recording support
    */
   function getAvailableMode(): RecordingMode | null {
@@ -209,6 +222,41 @@ export function useScreenRecording() {
   }
 
   // ==================== Canvas Recording (HTTP fallback) ====================
+  // 使用 html-to-image (SVG foreignObject) 替代 html2canvas
+  // 原理：将 DOM 序列化为 SVG foreignObject，由浏览器原生渲染引擎绘制
+  // 性能：比 html2canvas 快 3-10 倍（html2canvas 用 JS 重新实现了 CSS 渲染）
+
+  /**
+   * 将 html-to-image 渲染的临时 canvas 绘制到录制用的持久 canvas 上
+   */
+  async function renderFrameToCanvas(
+    target: HTMLElement,
+    toCanvas: (node: HTMLElement, options?: any) => Promise<HTMLCanvasElement>,
+    scale: number,
+  ) {
+    if (!canvasEl) return
+
+    // Adapt to resize
+    const currentRect = target.getBoundingClientRect()
+    const w = Math.floor(currentRect.width * scale)
+    const h = Math.floor(currentRect.height * scale)
+    if (canvasEl.width !== w || canvasEl.height !== h) {
+      canvasEl.width = w
+      canvasEl.height = h
+    }
+
+    // html-to-image 每次返回新 canvas，需要绘制到我们的持久 canvas 上
+    const rendered = await toCanvas(target, {
+      pixelRatio: scale,
+      backgroundColor: null,
+    })
+
+    const ctx = canvasEl.getContext('2d')
+    if (ctx) {
+      ctx.clearRect(0, 0, canvasEl.width, canvasEl.height)
+      ctx.drawImage(rendered, 0, 0, canvasEl.width, canvasEl.height)
+    }
+  }
 
   async function startCanvasRecording(auto: boolean): Promise<boolean> {
     const target = captureTargetRef.value
@@ -218,29 +266,24 @@ export function useScreenRecording() {
     }
 
     try {
-      // Lazy load html2canvas only when needed
-      if (!html2canvasLib) {
-        const mod = await import('html2canvas')
-        html2canvasLib = mod.default
+      // Lazy load html-to-image only when needed
+      if (!toCanvasFn) {
+        const mod = await import('html-to-image')
+        toCanvasFn = mod.toCanvas
       }
-      const html2canvas = html2canvasLib
+      const toCanvas = toCanvasFn
 
       const rect = target.getBoundingClientRect()
-      const scale = Math.min(window.devicePixelRatio, 2) // Cap at 2x for performance
+      // ⚡ 优化: 固定 1x 缩放，减少像素处理量
+      const scale = 1
 
-      // Create persistent canvas for recording
+      // Create persistent canvas for recording (captureStream 绑定此 canvas)
       canvasEl = document.createElement('canvas')
       canvasEl.width = Math.floor(rect.width * scale)
       canvasEl.height = Math.floor(rect.height * scale)
 
       // Render initial frame
-      await html2canvas(target, {
-        canvas: canvasEl,
-        scale,
-        useCORS: true,
-        logging: false,
-        backgroundColor: null,
-      })
+      await renderFrameToCanvas(target, toCanvas, scale)
 
       // Create MediaStream from canvas (0 = manual frame control via requestFrame)
       const stream = (canvasEl as any).captureStream(0) as MediaStream
@@ -265,42 +308,62 @@ export function useScreenRecording() {
       mediaRecorder.value = recorder
       recorder.start(100)
 
-      // Continuous capture loop (~10 FPS)
+      // ⚡ 使用 MutationObserver 监听 DOM 变化，仅在内容变化时才截帧
+      isDirty = false // Initial frame already captured
+      mutationObserver = new MutationObserver(() => {
+        isDirty = true
+      })
+      mutationObserver.observe(target, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ['class', 'style'],
+      })
+
+      // ⚡ 使用 requestAnimationFrame 替代 setInterval，与浏览器渲染管线同步
       let isCapturing = false
-      const CAPTURE_INTERVAL = 100
+      const CAPTURE_MIN_INTERVAL = 100 // html-to-image 更快，可以支持 ~10 FPS
 
-      captureTimerId = setInterval(async () => {
-        if (isCapturing || !canvasEl || !isRecording.value) return
-        isCapturing = true
-        try {
-          // Adapt to resize
-          const currentRect = target.getBoundingClientRect()
-          const w = Math.floor(currentRect.width * scale)
-          const h = Math.floor(currentRect.height * scale)
-          if (canvasEl.width !== w || canvasEl.height !== h) {
-            canvasEl.width = w
-            canvasEl.height = h
+      function captureLoop() {
+        if (!isRecording.value || !canvasEl) return
+
+        captureRafId = requestAnimationFrame(async () => {
+          const now = performance.now()
+
+          // 跳过条件：正在截帧中 / DOM 未变化 / 距上次截帧时间不够
+          if (
+            isCapturing ||
+            !isDirty ||
+            now - lastCaptureTime < CAPTURE_MIN_INTERVAL
+          ) {
+            captureLoop()
+            return
           }
 
-          await html2canvas(target, {
-            canvas: canvasEl,
-            scale,
-            useCORS: true,
-            logging: false,
-            backgroundColor: null,
-          })
+          isCapturing = true
+          isDirty = false
+          lastCaptureTime = now
 
-          // Signal new frame to captureStream
-          const track = stream.getVideoTracks()[0]
-          if (track && 'requestFrame' in track) {
-            ;(track as any).requestFrame()
+          try {
+            await renderFrameToCanvas(target, toCanvas, scale)
+
+            // Signal new frame to captureStream
+            const track = stream.getVideoTracks()[0]
+            if (track && 'requestFrame' in track) {
+              ;(track as any).requestFrame()
+            }
+          } catch (e) {
+            console.warn('Canvas capture frame error:', e)
+          } finally {
+            isCapturing = false
           }
-        } catch (e) {
-          console.warn('Canvas capture frame error:', e)
-        } finally {
-          isCapturing = false
-        }
-      }, CAPTURE_INTERVAL)
+
+          captureLoop()
+        })
+      }
+
+      captureLoop()
 
       isRecording.value = true
       isAutoRecording.value = auto
