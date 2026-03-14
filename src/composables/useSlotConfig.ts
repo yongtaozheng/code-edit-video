@@ -10,7 +10,7 @@ export function useSlotConfig(options: {
   const slotConfigParsedCSS = ref('')
   const slotConfigParsedJS = ref('')
   const slotConfigOrder = ref<('html' | 'css' | 'js')[]>(['html', 'css', 'js'])
-  const slotConfigPauseBetween = ref(true)
+  const slotConfigPauseBetween = ref(false)
   const slotConfigDragging = ref<'html' | 'css' | 'js' | null>(null)
   const slotConfigDragOver = ref<'html' | 'css' | 'js' | null>(null)
   const slotConfigCopied = ref(false)
@@ -21,7 +21,7 @@ export function useSlotConfig(options: {
     slotConfigParsedCSS.value = ''
     slotConfigParsedJS.value = ''
     slotConfigOrder.value = ['html', 'css', 'js']
-    slotConfigPauseBetween.value = true
+    slotConfigPauseBetween.value = false
     slotConfigDragging.value = null
     slotConfigDragOver.value = null
     slotConfigCopied.value = false

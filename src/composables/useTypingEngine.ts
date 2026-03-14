@@ -19,8 +19,8 @@ export function useTypingEngine(options: {
   const typingComplete = ref(false)
 
   const typingMode = ref<TypingMode>('auto')
-  const speedPreset = ref<SpeedPreset>('medium')
-  const typingSpeed = ref(80)
+  const speedPreset = ref<SpeedPreset>('fast')
+  const typingSpeed = ref(30)
   const manualCharsPerKey = ref(1)
   const lineActions = ref<LineAction[]>([])
 

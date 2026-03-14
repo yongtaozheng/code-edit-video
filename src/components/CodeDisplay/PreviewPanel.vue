@@ -1,5 +1,7 @@
 <script setup lang="ts">
-defineProps<{
+import { ref, watch, onMounted } from 'vue'
+
+const props = defineProps<{
   previewCode: string
   previewExpanded: boolean
   previewWidth: number
@@ -11,6 +13,112 @@ const emit = defineEmits<{
   togglePreview: []
   resizeStart: [e: MouseEvent]
 }>()
+
+const iframeRef = ref<HTMLIFrameElement | null>(null)
+let initialized = false
+
+/**
+ * Reactivate scripts inside a container.
+ * Scripts inserted via innerHTML won't execute — we need to
+ * replace them with freshly created <script> elements.
+ */
+function reactivateScripts(doc: Document, container: HTMLElement) {
+  container.querySelectorAll('script').forEach(oldScript => {
+    const newScript = doc.createElement('script')
+    for (const attr of Array.from(oldScript.attributes)) {
+      newScript.setAttribute(attr.name, attr.value)
+    }
+    newScript.textContent = oldScript.textContent || ''
+    oldScript.parentNode?.replaceChild(newScript, oldScript)
+  })
+}
+
+/**
+ * Seamless iframe update: manipulate the iframe's document DOM directly
+ * to avoid the full-page navigation flicker caused by srcdoc changes.
+ */
+function updatePreview(html: string) {
+  const iframe = iframeRef.value
+  if (!iframe) return
+
+  try {
+    const doc = iframe.contentDocument
+    if (!doc) throw new Error('No contentDocument access')
+
+    if (!initialized) {
+      // First render: write the full document to establish the initial state
+      doc.open()
+      doc.write(html)
+      doc.close()
+      initialized = true
+      return
+    }
+
+    // Parse the new HTML into a virtual document
+    const parser = new DOMParser()
+    const newDoc = parser.parseFromString(html, 'text/html')
+
+    // --- Update <head> (styles, meta tags, etc.) ---
+    doc.head.innerHTML = newDoc.head.innerHTML
+    reactivateScripts(doc, doc.head)
+
+    // --- Update <body> ---
+    // 1. Extract scripts from the new body before setting innerHTML
+    //    (innerHTML doesn't execute scripts, so we handle them separately)
+    const newBody = newDoc.body
+    const scripts: Array<{
+      textContent: string
+      src: string
+      attrs: Array<{ name: string; value: string }>
+    }> = []
+
+    newBody.querySelectorAll('script').forEach(s => {
+      const attrs: Array<{ name: string; value: string }> = []
+      for (const attr of Array.from(s.attributes)) {
+        if (attr.name !== 'src') attrs.push({ name: attr.name, value: attr.value })
+      }
+      scripts.push({
+        textContent: s.textContent || '',
+        src: s.getAttribute('src') || '',
+        attrs,
+      })
+      s.remove()
+    })
+
+    // 2. Replace body HTML (script-free) — no navigation, no flicker
+    doc.body.innerHTML = newBody.innerHTML
+
+    // 3. Re-inject scripts as fresh elements so the browser executes them
+    scripts.forEach(({ textContent, src, attrs }) => {
+      const script = doc.createElement('script')
+      if (src) script.src = src
+      else script.textContent = textContent
+      attrs.forEach(({ name, value }) => script.setAttribute(name, value))
+      doc.body.appendChild(script)
+    })
+  } catch {
+    // Fallback: use srcdoc (will flicker, but at least works)
+    iframe.srcdoc = html
+    initialized = false
+  }
+}
+
+// Initial render when the component mounts
+onMounted(() => {
+  if (props.previewCode) {
+    updatePreview(props.previewCode)
+  }
+})
+
+// Subsequent updates — watch for prop changes
+watch(
+  () => props.previewCode,
+  (newCode) => {
+    if (newCode) {
+      updatePreview(newCode)
+    }
+  },
+)
 </script>
 
 <template>
@@ -58,8 +166,8 @@ const emit = defineEmits<{
     </div>
     <div class="preview-body">
       <iframe
-        :srcdoc="previewCode"
-        sandbox="allow-scripts allow-modals"
+        ref="iframeRef"
+        sandbox="allow-scripts allow-modals allow-same-origin"
         class="preview-iframe"
         title="HTML Preview"
       />
