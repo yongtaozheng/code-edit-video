@@ -1627,7 +1627,7 @@ onUnmounted(() => {
         <textarea
           ref="textareaRef"
           v-model="code"
-          :class="['code-input', { 'hide-caret': isTyping && !typingComplete }]"
+          class="code-input"
           @scroll="syncScroll"
           @keydown="handleTab"
           spellcheck="false"
@@ -2445,9 +2445,6 @@ onUnmounted(() => {
   -webkit-text-fill-color: transparent;
 }
 
-.code-input.hide-caret {
-  caret-color: transparent;
-}
 
 .code-input::selection {
   background: rgba(203, 166, 247, 0.2);
@@ -2459,8 +2456,8 @@ onUnmounted(() => {
   color: #45475a;
 }
 
-/* Typing Cursor */
-.typing-cursor {
+/* Typing Cursor — use :deep() because the element is injected via v-html */
+.code-highlight :deep(.typing-cursor) {
   display: inline-block;
   width: 2px;
   height: 1.15em;
