@@ -67,7 +67,7 @@
 
 ### 环境要求
 
-- [Node.js](https://nodejs.org/) >= 18
+- [Node.js](https://nodejs.org/) >= 16
 
 ### 安装与运行
 
