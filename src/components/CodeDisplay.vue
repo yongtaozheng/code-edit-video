@@ -58,6 +58,18 @@ const typingSpeed = ref(80)       // base delay ms (derived from preset)
 const manualCharsPerKey = ref(1)  // chars to type per keypress in manual mode
 const lineActions = ref<LineAction[]>([])
 
+// Screen recording
+const autoRecord = ref(false)          // Whether to auto-start recording when typing begins
+const autoStopRecord = ref(true)       // Whether to auto-stop recording when typing completes (only for auto-record)
+const isRecording = ref(false)         // Currently recording
+const isAutoRecording = ref(false)     // true = started by auto-record (auto-stops); false = manual (user controls)
+const mediaRecorder = ref<MediaRecorder | null>(null)
+const recordedChunks = ref<Blob[]>([])
+const mediaStream = ref<MediaStream | null>(null)
+const recordingStartTime = ref(0)
+const recordingDuration = ref('00:00')
+const recordingTimerInterval = ref<ReturnType<typeof setInterval> | null>(null)
+
 // Framework mode: display skeleton first, then type snippets at marked positions
 const isFrameworkMode = ref(false)
 const frameworkBase = ref('')              // The skeleton code (everything outside [slot] blocks)
@@ -219,9 +231,13 @@ function scrollToCursor() {
  *   <!--[quick]-->   Instantly type this entire line
  *   <!--[ignore]-->  Skip this line entirely
  *
- * Also supports // and # style comments:
+ * Also supports /​* *​/, // and # style comments:
+ *   /​*[pause]*​/  /​*[quick]*​/  /​*[ignore]*​/
  *   //[pause]  //[quick]  //[ignore]
  *   #[pause]   #[quick]   #[ignore]
+ *
+ * Spaces are allowed between delimiters and markers:
+ *   <!--  [pause]  -->   /​*  [pause]  *​/   //  [pause]   #  [pause]
  */
 function parseAndCleanCode(rawCode: string): { cleanCode: string; actions: LineAction[] } {
   const lines = rawCode.split('\n')
@@ -231,11 +247,11 @@ function parseAndCleanCode(rawCode: string): { cleanCode: string; actions: LineA
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    const actionMatch = line.match(/(?:<!--\[(pause|quick|ignore)\]-->|(?:\/\/|#)\[(pause|quick|ignore)\])\s*$/)
+    const actionMatch = line.match(/(?:<!--\s*\[(pause|quick|ignore)\]\s*-->|\/\*\s*\[(pause|quick|ignore)\]\s*\*\/|(?:\/\/|#)\s*\[(pause|quick|ignore)\])\s*$/)
 
     if (actionMatch) {
-      const actionType = (actionMatch[1] || actionMatch[2]) as 'pause' | 'quick' | 'ignore'
-      const cleanLine = line.replace(/\s*(?:<!--\[(pause|quick|ignore)\]-->|(?:\/\/|#)\[(pause|quick|ignore)\])\s*$/, '')
+      const actionType = (actionMatch[1] || actionMatch[2] || actionMatch[3]) as 'pause' | 'quick' | 'ignore'
+      const cleanLine = line.replace(/\s*(?:<!--\s*\[(pause|quick|ignore)\]\s*-->|\/\*\s*\[(pause|quick|ignore)\]\s*\*\/|(?:\/\/|#)\s*\[(pause|quick|ignore)\])\s*$/, '')
 
       if (actionType === 'ignore') {
         // Skip this line entirely — don't add to cleanLines
@@ -289,9 +305,13 @@ function getActionAtIndex(index: number): LineAction | null {
  *   <!--[slot:2:nopause]-->    Custom order + no pause
  *   <!--[/slot]-->             Slot end marker
  *
- * Also supports // and # comment styles:
+ * Also supports /​* *​/, // and # comment styles:
+ *   /​*[slot]*​/  /​*[slot:2:nopause]*​/  /​*[/slot]*​/
  *   //[slot]  //[slot:2:nopause]  //[/slot]
  *   #[slot]   #[slot:1:nopause]   #[/slot]
+ *
+ * Spaces are allowed between delimiters and markers:
+ *   <!--  [slot]  -->   /​*  [slot]  *​/   //  [slot]   #  [slot]
  */
 function parseFrameworkCode(rawCode: string): {
   framework: string
@@ -307,9 +327,9 @@ function parseFrameworkCode(rawCode: string): {
   let currentSlotPauseAfter = true
   let positionalIndex = 0
 
-  // Match slot start with optional params:  <!--[slot]-->  <!--[slot:2]-->  <!--[slot:nopause]-->  <!--[slot:2:nopause]-->
-  const slotStartRe = /^\s*(?:<!--\[slot((?::[^\]]*)*)\]-->|(?:\/\/|#)\[slot((?::[^\]]*)*)\])\s*$/
-  const slotEndRe = /^\s*(?:<!--\[\/slot\]-->|(?:\/\/|#)\[\/slot\])\s*$/
+  // Match slot start with optional params:  <!--[slot]-->  /*[slot]*/  //[slot]  #[slot]  (spaces allowed)
+  const slotStartRe = /^\s*(?:<!--\s*\[slot((?::[^\]]*)*)\]\s*-->|\/\*\s*\[slot((?::[^\]]*)*)\]\s*\*\/|(?:\/\/|#)\s*\[slot((?::[^\]]*)*)\])\s*$/
+  const slotEndRe = /^\s*(?:<!--\s*\[\/slot\]\s*-->|\/\*\s*\[\/slot\]\s*\*\/|(?:\/\/|#)\s*\[\/slot\])\s*$/
 
   for (const line of lines) {
     const startMatch = line.match(slotStartRe)
@@ -317,7 +337,7 @@ function parseFrameworkCode(rawCode: string): {
       inSlot = true
       currentSlotLines = []
       // Parse params from the captured group (e.g., ":2:nopause" or ":nopause" or "")
-      const params = (startMatch[1] || startMatch[2] || '').replace(/^:/, '')
+      const params = (startMatch[1] || startMatch[2] || startMatch[3] || '').replace(/^:/, '')
       currentSlotOrder = -1
       currentSlotPauseAfter = true
       if (params) {
@@ -470,6 +490,7 @@ function typeNextChar() {
   if (currentIndex.value >= targetCode.value.length) {
     isTyping.value = false
     typingComplete.value = true
+    autoStopRecordingIfNeeded()
     return
   }
 
@@ -516,6 +537,7 @@ function typeNextSlotChar() {
   if (currentSlotIndex.value >= execOrder.length) {
     isTyping.value = false
     typingComplete.value = true
+    autoStopRecordingIfNeeded()
     return
   }
 
@@ -533,6 +555,7 @@ function typeNextSlotChar() {
       typingComplete.value = true
       code.value = buildCodeFromSlots()
       scrollToCursor()
+      autoStopRecordingIfNeeded()
       return
     }
 
@@ -587,6 +610,7 @@ function typeManualChunk() {
     if (currentIndex.value >= targetCode.value.length) {
       isTyping.value = false
       typingComplete.value = true
+      autoStopRecordingIfNeeded()
       break
     }
 
@@ -625,6 +649,7 @@ function typeManualSlotChunk() {
   if (currentSlotIndex.value >= execOrder.length) {
     isTyping.value = false
     typingComplete.value = true
+    autoStopRecordingIfNeeded()
     return
   }
 
@@ -639,6 +664,7 @@ function typeManualSlotChunk() {
     if (currentSlotIndex.value >= execOrder.length) {
       isTyping.value = false
       typingComplete.value = true
+      autoStopRecordingIfNeeded()
       break
     }
 
@@ -654,6 +680,7 @@ function typeManualSlotChunk() {
       if (currentSlotIndex.value >= execOrder.length) {
         isTyping.value = false
         typingComplete.value = true
+        autoStopRecordingIfNeeded()
         break
       }
 
@@ -687,8 +714,17 @@ function closePasteModal() {
   pasteCode.value = ''
 }
 
-function startTyping() {
+async function startTyping() {
   if (!pasteCode.value.trim()) return
+
+  // Start screen recording if auto-record is enabled
+  if (autoRecord.value) {
+    const recordingStarted = await startRecording(true)
+    if (!recordingStarted) {
+      // User denied permission or recording failed — continue without recording
+      autoRecord.value = false
+    }
+  }
 
   // Check for framework mode ([slot] markers present)
   const { framework, slots, hasSlots } = parseFrameworkCode(pasteCode.value)
@@ -792,6 +828,7 @@ function stopTyping() {
   slotExecOrder.value = []
   currentSlotIndex.value = 0
   currentSlotCharIndex.value = 0
+  autoStopRecordingIfNeeded()
 }
 
 function finishInstantly() {
@@ -822,6 +859,7 @@ function finishInstantly() {
   isTyping.value = false
   typingComplete.value = true
   scrollToCursor()
+  autoStopRecordingIfNeeded()
 }
 
 // Switch between auto and manual mode mid-typing
@@ -860,6 +898,146 @@ watch(typingSpeed, () => {
     }
   }
 })
+
+// ==================== Screen Recording ====================
+function updateRecordingDuration() {
+  const elapsed = Math.floor((Date.now() - recordingStartTime.value) / 1000)
+  const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0')
+  const seconds = (elapsed % 60).toString().padStart(2, '0')
+  recordingDuration.value = `${minutes}:${seconds}`
+}
+
+/**
+ * Start screen recording.
+ * @param auto  true = started by auto-record (will auto-stop when typing ends);
+ *              false = started manually (user must stop it themselves).
+ */
+async function startRecording(auto: boolean = false): Promise<boolean> {
+  // If already recording, do nothing
+  if (isRecording.value) return true
+
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { displaySurface: 'browser' } as MediaTrackConstraints,
+      audio: true,
+    })
+    mediaStream.value = stream
+
+    // Detect user stopping screen share via browser UI
+    stream.getVideoTracks()[0].addEventListener('ended', () => {
+      if (isRecording.value) {
+        stopRecordingAndDownload()
+      }
+    })
+
+    const recorder = new MediaRecorder(stream, {
+      mimeType: getSupportedMimeType(),
+    })
+
+    recordedChunks.value = []
+
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        recordedChunks.value.push(event.data)
+      }
+    }
+
+    recorder.onstop = () => {
+      downloadRecording()
+      cleanupRecordingResources()
+    }
+
+    mediaRecorder.value = recorder
+    recorder.start(100) // Collect data every 100ms
+    isRecording.value = true
+    isAutoRecording.value = auto
+    recordingStartTime.value = Date.now()
+    recordingDuration.value = '00:00'
+    recordingTimerInterval.value = setInterval(updateRecordingDuration, 1000)
+
+    return true
+  } catch (err) {
+    console.warn('Screen recording permission denied or failed:', err)
+    cleanupRecordingResources()
+    return false
+  }
+}
+
+/** Toggle manual recording: start if not recording, stop if recording. */
+async function toggleManualRecording() {
+  if (isRecording.value) {
+    stopRecordingAndDownload()
+  } else {
+    await startRecording(false)
+  }
+}
+
+function getSupportedMimeType(): string {
+  const types = [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/webm',
+    'video/mp4',
+  ]
+  for (const type of types) {
+    if (MediaRecorder.isTypeSupported(type)) {
+      return type
+    }
+  }
+  return 'video/webm'
+}
+
+function stopRecordingAndDownload() {
+  if (mediaRecorder.value && mediaRecorder.value.state !== 'inactive') {
+    mediaRecorder.value.stop() // This triggers onstop → downloadRecording
+  } else {
+    cleanupRecordingResources()
+  }
+}
+
+/**
+ * Auto-stop recording only if it was started via auto-record.
+ * Called from typing completion / stop events. Manual recordings are unaffected.
+ */
+function autoStopRecordingIfNeeded() {
+  if (isRecording.value && isAutoRecording.value && autoStopRecord.value) {
+    stopRecordingAndDownload()
+  }
+}
+
+function downloadRecording() {
+  if (recordedChunks.value.length === 0) return
+
+  const mimeType = mediaRecorder.value?.mimeType || 'video/webm'
+  const blob = new Blob(recordedChunks.value, { type: mimeType })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  const ext = mimeType.includes('mp4') ? 'mp4' : 'webm'
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19)
+  a.href = url
+  a.download = `code-typing-${timestamp}.${ext}`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+  recordedChunks.value = []
+}
+
+function cleanupRecordingResources() {
+  isRecording.value = false
+  isAutoRecording.value = false
+  if (recordingTimerInterval.value) {
+    clearInterval(recordingTimerInterval.value)
+    recordingTimerInterval.value = null
+  }
+  if (mediaStream.value) {
+    mediaStream.value.getTracks().forEach(track => track.stop())
+    mediaStream.value = null
+  }
+  mediaRecorder.value = null
+}
 
 // ==================== Keyboard Handling ====================
 function handleGlobalKeydown(e: KeyboardEvent) {
@@ -909,6 +1087,8 @@ onUnmounted(() => {
     clearTimeout(typingTimer.value)
   }
   document.removeEventListener('keydown', handleGlobalKeydown)
+  // Clean up recording resources
+  cleanupRecordingResources()
 })
 </script>
 
@@ -924,6 +1104,18 @@ onUnmounted(() => {
         <span class="header-title">HTML Code Viewer</span>
       </div>
       <div class="header-right">
+        <!-- Manual Record Button -->
+        <button
+          class="record-btn"
+          :class="{ recording: isRecording }"
+          @click="toggleManualRecording"
+          :title="isRecording ? '停止录屏并下载' : '开始手动录屏'"
+        >
+          <span class="record-btn-dot" :class="{ active: isRecording }"></span>
+          <span v-if="isRecording" class="record-btn-time">{{ recordingDuration }}</span>
+          <span>{{ isRecording ? '停止录屏' : '录屏' }}</span>
+        </button>
+
         <button class="typing-btn" @click="openPasteModal" :disabled="isTyping && !typingComplete">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
             <path d="M12 20h9" />
@@ -1043,6 +1235,17 @@ onUnmounted(() => {
       </div>
 
       <div class="control-right">
+        <!-- Recording Indicator -->
+        <div class="recording-indicator" v-if="isRecording">
+          <span class="recording-dot"></span>
+          <span class="recording-time">{{ recordingDuration }}</span>
+          <button class="ctrl-btn ctrl-btn-rec-stop" @click="stopRecordingAndDownload" title="停止录屏并下载">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+              <rect x="6" y="6" width="12" height="12" rx="1" />
+            </svg>
+          </button>
+        </div>
+
         <div class="progress-info">
           <span class="progress-text" v-if="isFrameworkMode">
             {{ frameworkTypedChars }} / {{ frameworkTotalChars }}
@@ -1149,7 +1352,7 @@ onUnmounted(() => {
               ref="pasteTextareaRef"
               v-model="pasteCode"
               class="paste-textarea"
-              placeholder="在此粘贴 HTML 代码...&#10;&#10;支持行尾添加特殊标记控制输入行为：&#10;  <!--[pause]-->  在此行暂停，等待手动继续&#10;  <!--[quick]-->  此行一次性输入（不逐字）&#10;  <!--[ignore]--> 跳过此行不输入&#10;&#10;框架模式 — 先展示骨架，再逐段输入：&#10;  <!--[slot]-->          默认顺序&#10;  <!--[slot:2]-->        指定输入顺序（数字越小越先输入）&#10;  <!--[slot:nopause]-->  输入完不暂停，直接进入下一段&#10;  <!--[slot:1:nopause]--> 组合使用&#10;  <!--[/slot]-->         片段结束"
+              placeholder="在此粘贴代码...&#10;&#10;支持行尾添加特殊标记控制输入行为：&#10;  <!--[pause]-->  在此行暂停，等待手动继续&#10;  /*[pause]*/    CSS 注释风格&#10;  //[pause]      JS 注释风格&#10;  同理支持 [quick]（瞬间输入）和 [ignore]（跳过）&#10;&#10;框架模式 — 先展示骨架，再逐段输入：&#10;  <!--[slot]-->          默认顺序&#10;  /*[slot:2]*/           指定输入顺序&#10;  //[slot:nopause]       输入完不暂停&#10;  <!--[slot:1:nopause]--> 组合使用&#10;  <!--[/slot]-->         片段结束&#10;&#10;注释中间允许空格：&#10;  <!--  [slot]  -->   /*  [slot]  */   //  [slot]"
               spellcheck="false"
             />
             <!-- Action markers help -->
@@ -1193,6 +1396,9 @@ onUnmounted(() => {
               <div class="action-help-note">
                 框架（slot 外的代码）立即显示，片段（slot 内的代码）按顺序逐字输入
               </div>
+              <div class="action-help-note">
+                支持 &lt;!-- --&gt;、/* */、//、# 注释风格，注释与标记之间允许空格
+              </div>
             </div>
           </div>
 
@@ -1203,6 +1409,32 @@ onUnmounted(() => {
               </span>
             </div>
             <div class="modal-footer-right">
+              <!-- Auto-record toggles -->
+              <div class="record-toggles">
+                <label class="record-toggle" title="模拟开始时自动录屏">
+                  <input type="checkbox" v-model="autoRecord" class="record-toggle-input" />
+                  <span class="record-toggle-track">
+                    <span class="record-toggle-thumb"></span>
+                  </span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" class="record-toggle-icon">
+                    <circle cx="12" cy="12" r="10" />
+                    <circle cx="12" cy="12" r="4" fill="currentColor" />
+                  </svg>
+                  <span class="record-toggle-label">自动录屏</span>
+                </label>
+                <label
+                  v-if="autoRecord"
+                  class="record-toggle record-toggle-sub"
+                  title="模拟完成后自动停止录屏并下载；关闭则模拟完成后继续录制，需手动停止"
+                >
+                  <input type="checkbox" v-model="autoStopRecord" class="record-toggle-input" />
+                  <span class="record-toggle-track">
+                    <span class="record-toggle-thumb"></span>
+                  </span>
+                  <span class="record-toggle-label">完成自动停录</span>
+                </label>
+              </div>
+
               <!-- Mode selection in modal -->
               <div class="modal-mode-toggle">
                 <button
@@ -1286,6 +1518,66 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+/* Record Button (Header) */
+.record-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-radius: 8px;
+  border: 1px solid #313244;
+  background: rgba(205, 214, 244, 0.05);
+  color: #6c7086;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: system-ui, sans-serif;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.record-btn:hover {
+  background: rgba(243, 139, 168, 0.1);
+  border-color: rgba(243, 139, 168, 0.3);
+  color: #f38ba8;
+}
+
+.record-btn.recording {
+  background: rgba(243, 139, 168, 0.12);
+  border-color: rgba(243, 139, 168, 0.4);
+  color: #f38ba8;
+}
+
+.record-btn.recording:hover {
+  background: rgba(243, 139, 168, 0.2);
+  border-color: rgba(243, 139, 168, 0.6);
+}
+
+.record-btn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6c7086;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.record-btn:hover .record-btn-dot {
+  background: #f38ba8;
+}
+
+.record-btn-dot.active {
+  background: #f38ba8;
+  animation: recordingPulse 1.2s ease-in-out infinite;
+}
+
+.record-btn-time {
+  font-size: 12px;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  font-weight: 600;
+  color: #f38ba8;
+  min-width: 36px;
 }
 
 .typing-btn {
@@ -2033,6 +2325,156 @@ onUnmounted(() => {
 .modal-btn-start:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* ==================== Recording Toggle (Modal) ==================== */
+.record-toggles {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.record-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid #313244;
+  transition: all 0.2s;
+}
+
+.record-toggle:hover {
+  border-color: rgba(243, 139, 168, 0.3);
+  background: rgba(243, 139, 168, 0.05);
+}
+
+.record-toggle-input {
+  display: none;
+}
+
+.record-toggle-track {
+  position: relative;
+  width: 28px;
+  height: 16px;
+  border-radius: 8px;
+  background: #313244;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.record-toggle-input:checked + .record-toggle-track {
+  background: rgba(243, 139, 168, 0.4);
+}
+
+.record-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #6c7086;
+  transition: all 0.2s;
+}
+
+.record-toggle-input:checked + .record-toggle-track .record-toggle-thumb {
+  left: 14px;
+  background: #f38ba8;
+}
+
+.record-toggle-icon {
+  color: #6c7086;
+  transition: color 0.2s;
+  flex-shrink: 0;
+}
+
+.record-toggle-input:checked ~ .record-toggle-icon {
+  color: #f38ba8;
+}
+
+.record-toggle-label {
+  font-size: 12px;
+  font-weight: 600;
+  font-family: system-ui, sans-serif;
+  color: #6c7086;
+  white-space: nowrap;
+  transition: color 0.2s;
+}
+
+.record-toggle-input:checked ~ .record-toggle-label {
+  color: #f38ba8;
+}
+
+.record-toggle-sub {
+  border-style: dashed;
+  animation: fadeIn 0.2s ease;
+}
+
+.record-toggle-sub .record-toggle-input:checked + .record-toggle-track {
+  background: rgba(166, 227, 161, 0.4);
+}
+
+.record-toggle-sub .record-toggle-input:checked + .record-toggle-track .record-toggle-thumb {
+  background: #a6e3a1;
+}
+
+.record-toggle-sub .record-toggle-input:checked ~ .record-toggle-label {
+  color: #a6e3a1;
+}
+
+.record-toggle-sub:hover {
+  border-color: rgba(166, 227, 161, 0.3);
+  background: rgba(166, 227, 161, 0.05);
+}
+
+/* ==================== Recording Indicator (Control Bar) ==================== */
+.recording-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: rgba(243, 139, 168, 0.08);
+  border: 1px solid rgba(243, 139, 168, 0.2);
+  margin-right: 12px;
+}
+
+.recording-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f38ba8;
+  animation: recordingPulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes recordingPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+}
+
+.recording-time {
+  font-size: 12px;
+  font-weight: 600;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  color: #f38ba8;
+  min-width: 40px;
+}
+
+.ctrl-btn-rec-stop {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  color: #f38ba8;
+  border-color: rgba(243, 139, 168, 0.3);
+}
+
+.ctrl-btn-rec-stop:hover {
+  background: rgba(243, 139, 168, 0.15);
+  border-color: rgba(243, 139, 168, 0.5);
 }
 
 /* Scrollbar styling */
