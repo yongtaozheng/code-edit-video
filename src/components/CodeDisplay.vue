@@ -26,6 +26,8 @@ interface LineAction {
 interface FrameworkSlot {
   content: string          // The code snippet to type into this slot
   insertPosition: number   // Character position in the framework base string
+  order: number            // Execution order (lower = first); default = positional index
+  pauseAfter: boolean      // Whether to auto-pause after this slot completes
 }
 
 // ==================== Editor State ====================
@@ -60,7 +62,8 @@ const lineActions = ref<LineAction[]>([])
 const isFrameworkMode = ref(false)
 const frameworkBase = ref('')              // The skeleton code (everything outside [slot] blocks)
 const frameworkSlots = ref<FrameworkSlot[]>([])
-const currentSlotIndex = ref(0)           // Which slot is currently being typed
+const slotExecOrder = ref<number[]>([])   // Execution order: maps step index → slot index in frameworkSlots
+const currentSlotIndex = ref(0)           // Current step in slotExecOrder (NOT the slot index!)
 const currentSlotCharIndex = ref(0)       // Character position within current slot
 
 // ==================== Speed Preset Mapping ====================
@@ -91,10 +94,11 @@ const lineNumbers = computed(() => {
 
 const frameworkTypedChars = computed(() => {
   let chars = 0
-  for (let i = 0; i < currentSlotIndex.value && i < frameworkSlots.value.length; i++) {
-    chars += frameworkSlots.value[i].content.length
+  const execOrder = slotExecOrder.value
+  for (let e = 0; e < currentSlotIndex.value && e < execOrder.length; e++) {
+    chars += frameworkSlots.value[execOrder[e]].content.length
   }
-  if (currentSlotIndex.value < frameworkSlots.value.length) {
+  if (currentSlotIndex.value < execOrder.length) {
     chars += currentSlotCharIndex.value
   }
   return chars
@@ -116,8 +120,8 @@ const typingProgress = computed(() => {
 const typingStatusText = computed(() => {
   if (typingComplete.value) return '已完成'
   if (isFrameworkMode.value) {
-    const slotNum = Math.min(currentSlotIndex.value + 1, frameworkSlots.value.length)
-    const totalSlots = frameworkSlots.value.length
+    const totalSlots = slotExecOrder.value.length
+    const slotNum = Math.min(currentSlotIndex.value + 1, totalSlots)
     if (isPaused.value) return `片段 ${slotNum}/${totalSlots} · 按空格继续`
     if (isTyping.value && typingMode.value === 'manual') return `片段 ${slotNum}/${totalSlots} · 按任意键输入`
     if (isTyping.value) return `片段 ${slotNum}/${totalSlots} · 输入中...`
@@ -167,14 +171,23 @@ function scrollToCursor() {
   nextTick(() => {
     let targetLine: number
 
-    if (isFrameworkMode.value && currentSlotIndex.value < frameworkSlots.value.length) {
+    if (isFrameworkMode.value && currentSlotIndex.value < slotExecOrder.value.length) {
       // In framework mode, scroll to the line where current slot is being typed
       const currentCode = code.value
-      const slot = frameworkSlots.value[currentSlotIndex.value]
+      const actualSlotIdx = slotExecOrder.value[currentSlotIndex.value]
+      const slot = frameworkSlots.value[actualSlotIdx]
+      // Calculate the insertion position in the built code string
+      // Account for all slots (in insertPosition order) that appear before this slot
+      // and have been typed (fully or partially)
       let insertPosInCode = slot.insertPosition
-      // Adjust for previously inserted slot content
-      for (let i = 0; i < currentSlotIndex.value; i++) {
-        insertPosInCode += frameworkSlots.value[i].content.length
+      const completedSlots = new Set<number>()
+      for (let e = 0; e < currentSlotIndex.value; e++) {
+        completedSlots.add(slotExecOrder.value[e])
+      }
+      for (let si = 0; si < frameworkSlots.value.length; si++) {
+        if (si !== actualSlotIdx && frameworkSlots.value[si].insertPosition <= slot.insertPosition && completedSlots.has(si)) {
+          insertPosInCode += frameworkSlots.value[si].content.length
+        }
       }
       insertPosInCode += currentSlotCharIndex.value
       const codeUpToCursor = currentCode.substring(0, insertPosInCode)
@@ -270,9 +283,15 @@ function getActionAtIndex(index: number): LineAction | null {
  * Content inside [slot]...[/slot] blocks are "slots" (typed in sequentially).
  *
  * Supported marker formats:
- *   <!--[slot]-->  ... <!--[/slot]-->
- *   //[slot]       ... //[/slot]
- *   #[slot]        ... #[/slot]
+ *   <!--[slot]-->              Basic slot (default order, pause after)
+ *   <!--[slot:2]-->            Custom execution order (lower = first)
+ *   <!--[slot:nopause]-->      No pause after this slot finishes
+ *   <!--[slot:2:nopause]-->    Custom order + no pause
+ *   <!--[/slot]-->             Slot end marker
+ *
+ * Also supports // and # comment styles:
+ *   //[slot]  //[slot:2:nopause]  //[/slot]
+ *   #[slot]   #[slot:1:nopause]   #[/slot]
  */
 function parseFrameworkCode(rawCode: string): {
   framework: string
@@ -284,14 +303,33 @@ function parseFrameworkCode(rawCode: string): {
   const slots: FrameworkSlot[] = []
   let inSlot = false
   let currentSlotLines: string[] = []
+  let currentSlotOrder = -1       // -1 = auto (positional index)
+  let currentSlotPauseAfter = true
+  let positionalIndex = 0
 
-  const slotStartRe = /^\s*(?:<!--\[slot\]-->|(?:\/\/|#)\[slot\])\s*$/
+  // Match slot start with optional params:  <!--[slot]-->  <!--[slot:2]-->  <!--[slot:nopause]-->  <!--[slot:2:nopause]-->
+  const slotStartRe = /^\s*(?:<!--\[slot((?::[^\]]*)*)\]-->|(?:\/\/|#)\[slot((?::[^\]]*)*)\])\s*$/
   const slotEndRe = /^\s*(?:<!--\[\/slot\]-->|(?:\/\/|#)\[\/slot\])\s*$/
 
   for (const line of lines) {
-    if (slotStartRe.test(line)) {
+    const startMatch = line.match(slotStartRe)
+    if (startMatch) {
       inSlot = true
       currentSlotLines = []
+      // Parse params from the captured group (e.g., ":2:nopause" or ":nopause" or "")
+      const params = (startMatch[1] || startMatch[2] || '').replace(/^:/, '')
+      currentSlotOrder = -1
+      currentSlotPauseAfter = true
+      if (params) {
+        for (const part of params.split(':')) {
+          const trimmed = part.trim()
+          if (trimmed === 'nopause') {
+            currentSlotPauseAfter = false
+          } else if (/^\d+$/.test(trimmed)) {
+            currentSlotOrder = parseInt(trimmed, 10)
+          }
+        }
+      }
       continue
     }
 
@@ -300,7 +338,13 @@ function parseFrameworkCode(rawCode: string): {
         const content = currentSlotLines.join('\n') + '\n'
         const frameworkSoFar = frameworkLines.join('\n')
         const insertPosition = frameworkSoFar.length + (frameworkLines.length > 0 ? 1 : 0)
-        slots.push({ content, insertPosition })
+        slots.push({
+          content,
+          insertPosition,
+          order: currentSlotOrder >= 0 ? currentSlotOrder : positionalIndex,
+          pauseAfter: currentSlotPauseAfter,
+        })
+        positionalIndex++
       }
       inSlot = false
       continue
@@ -318,7 +362,12 @@ function parseFrameworkCode(rawCode: string): {
     const content = currentSlotLines.join('\n') + '\n'
     const frameworkSoFar = frameworkLines.join('\n')
     const insertPosition = frameworkSoFar.length + (frameworkLines.length > 0 ? 1 : 0)
-    slots.push({ content, insertPosition })
+    slots.push({
+      content,
+      insertPosition,
+      order: currentSlotOrder >= 0 ? currentSlotOrder : positionalIndex,
+      pauseAfter: currentSlotPauseAfter,
+    })
   }
 
   return {
@@ -329,29 +378,54 @@ function parseFrameworkCode(rawCode: string): {
 }
 
 /**
+ * Compute execution order: sort slots by their `order` field,
+ * with ties broken by original positional index (stable sort).
+ * Returns an array of indices into the frameworkSlots array.
+ */
+function computeSlotExecOrder(slots: FrameworkSlot[]): number[] {
+  const indices = slots.map((_, i) => i)
+  indices.sort((a, b) => {
+    const orderDiff = slots[a].order - slots[b].order
+    return orderDiff !== 0 ? orderDiff : a - b  // stable tie-break by position
+  })
+  return indices
+}
+
+/**
  * Build the full code string from framework base + typed slot content.
  * Framework is always fully displayed; each slot shows only the typed portion.
+ * Uses slotExecOrder to determine which slots have been completed.
  */
 function buildCodeFromSlots(): string {
   let result = ''
   let frameworkPos = 0
   const fw = frameworkBase.value
   const slots = frameworkSlots.value
+  const execOrder = slotExecOrder.value
+  const currentExecStep = currentSlotIndex.value
+  const currentActualIdx = currentExecStep < execOrder.length ? execOrder[currentExecStep] : -1
 
+  // Build set of completed slot indices (all execution steps before current)
+  const completedSlots = new Set<number>()
+  for (let e = 0; e < currentExecStep; e++) {
+    completedSlots.add(execOrder[e])
+  }
+
+  // Iterate slots in insertion-position order (original array order)
   for (let i = 0; i < slots.length; i++) {
     const slot = slots[i]
     // Add framework content up to this slot's insertion point
     result += fw.substring(frameworkPos, slot.insertPosition)
     frameworkPos = slot.insertPosition
 
-    if (i < currentSlotIndex.value) {
-      // Previous slots: fully typed
+    if (completedSlots.has(i)) {
+      // This slot was fully typed in an earlier execution step
       result += slot.content
-    } else if (i === currentSlotIndex.value) {
-      // Current slot: partially typed
+    } else if (i === currentActualIdx) {
+      // This slot is currently being typed
       result += slot.content.substring(0, currentSlotCharIndex.value)
     }
-    // Future slots: not yet typed, add nothing
+    // Slots not yet reached: add nothing
   }
 
   // Add remaining framework content after last slot
@@ -432,26 +506,29 @@ function typeNextChar() {
 
 /**
  * Framework mode: type next character in the current slot.
- * After a slot is fully typed, auto-pause before the next slot.
+ * After a slot is fully typed, check pauseAfter to decide whether to pause.
+ * Uses slotExecOrder to determine the actual slot being typed.
  */
 function typeNextSlotChar() {
   if (!isTyping.value || isPaused.value) return
 
-  const slots = frameworkSlots.value
-  if (currentSlotIndex.value >= slots.length) {
+  const execOrder = slotExecOrder.value
+  if (currentSlotIndex.value >= execOrder.length) {
     isTyping.value = false
     typingComplete.value = true
     return
   }
 
-  const currentSlot = slots[currentSlotIndex.value]
+  const actualSlotIdx = execOrder[currentSlotIndex.value]
+  const currentSlot = frameworkSlots.value[actualSlotIdx]
 
   if (currentSlotCharIndex.value >= currentSlot.content.length) {
-    // Current slot is complete, move to next
+    // Current slot is complete
+    const justFinished = currentSlot
     currentSlotIndex.value++
     currentSlotCharIndex.value = 0
 
-    if (currentSlotIndex.value >= slots.length) {
+    if (currentSlotIndex.value >= execOrder.length) {
       isTyping.value = false
       typingComplete.value = true
       code.value = buildCodeFromSlots()
@@ -459,10 +536,17 @@ function typeNextSlotChar() {
       return
     }
 
-    // Auto-pause between slots
-    isPaused.value = true
     code.value = buildCodeFromSlots()
     scrollToCursor()
+
+    if (justFinished.pauseAfter) {
+      // Auto-pause between slots
+      isPaused.value = true
+      return
+    }
+
+    // No pause — continue to next slot immediately
+    typingTimer.value = setTimeout(typeNextSlotChar, 50)
     return
   }
 
@@ -532,12 +616,13 @@ function typeManualChunk() {
 
 /**
  * Framework mode manual: type N characters per keypress within current slot.
+ * Respects pauseAfter flag when transitioning between slots.
  */
 function typeManualSlotChunk() {
   if (!isTyping.value || typingComplete.value) return
 
-  const slots = frameworkSlots.value
-  if (currentSlotIndex.value >= slots.length) {
+  const execOrder = slotExecOrder.value
+  if (currentSlotIndex.value >= execOrder.length) {
     isTyping.value = false
     typingComplete.value = true
     return
@@ -551,28 +636,34 @@ function typeManualSlotChunk() {
   const charsToType = manualCharsPerKey.value
 
   for (let i = 0; i < charsToType; i++) {
-    if (currentSlotIndex.value >= slots.length) {
+    if (currentSlotIndex.value >= execOrder.length) {
       isTyping.value = false
       typingComplete.value = true
       break
     }
 
-    const currentSlot = slots[currentSlotIndex.value]
+    const actualSlotIdx = execOrder[currentSlotIndex.value]
+    const currentSlot = frameworkSlots.value[actualSlotIdx]
 
     if (currentSlotCharIndex.value >= currentSlot.content.length) {
-      // Move to next slot
+      // Current slot complete
+      const justFinished = currentSlot
       currentSlotIndex.value++
       currentSlotCharIndex.value = 0
 
-      if (currentSlotIndex.value >= slots.length) {
+      if (currentSlotIndex.value >= execOrder.length) {
         isTyping.value = false
         typingComplete.value = true
         break
       }
 
-      // Pause between slots even in manual mode
-      isPaused.value = true
-      break
+      if (justFinished.pauseAfter) {
+        // Pause between slots
+        isPaused.value = true
+        break
+      }
+      // No pause — continue typing into next slot in this same keypress
+      continue
     }
 
     currentSlotCharIndex.value++
@@ -607,6 +698,7 @@ function startTyping() {
     isFrameworkMode.value = true
     frameworkBase.value = framework
     frameworkSlots.value = slots
+    slotExecOrder.value = computeSlotExecOrder(slots)
     currentSlotIndex.value = 0
     currentSlotCharIndex.value = 0
 
@@ -633,6 +725,7 @@ function startTyping() {
     isFrameworkMode.value = false
     frameworkBase.value = ''
     frameworkSlots.value = []
+    slotExecOrder.value = []
 
     const { cleanCode, actions } = parseAndCleanCode(pasteCode.value)
     rawTargetCode.value = pasteCode.value
@@ -696,6 +789,7 @@ function stopTyping() {
   isFrameworkMode.value = false
   frameworkBase.value = ''
   frameworkSlots.value = []
+  slotExecOrder.value = []
   currentSlotIndex.value = 0
   currentSlotCharIndex.value = 0
 }
@@ -708,7 +802,7 @@ function finishInstantly() {
 
   if (isFrameworkMode.value) {
     // Fill all slots completely
-    currentSlotIndex.value = frameworkSlots.value.length
+    currentSlotIndex.value = slotExecOrder.value.length
     currentSlotCharIndex.value = 0
     // Build final code with all slots fully inserted
     let result = ''
@@ -1055,7 +1149,7 @@ onUnmounted(() => {
               ref="pasteTextareaRef"
               v-model="pasteCode"
               class="paste-textarea"
-              placeholder="在此粘贴 HTML 代码...&#10;&#10;支持行尾添加特殊标记控制输入行为：&#10;  <!--[pause]-->  在此行暂停，等待手动继续&#10;  <!--[quick]-->  此行一次性输入（不逐字）&#10;  <!--[ignore]--> 跳过此行不输入&#10;&#10;框架模式 — 先展示骨架，再逐段输入：&#10;  <!--[slot]-->   代码片段开始&#10;  <!--[/slot]-->  代码片段结束"
+              placeholder="在此粘贴 HTML 代码...&#10;&#10;支持行尾添加特殊标记控制输入行为：&#10;  <!--[pause]-->  在此行暂停，等待手动继续&#10;  <!--[quick]-->  此行一次性输入（不逐字）&#10;  <!--[ignore]--> 跳过此行不输入&#10;&#10;框架模式 — 先展示骨架，再逐段输入：&#10;  <!--[slot]-->          默认顺序&#10;  <!--[slot:2]-->        指定输入顺序（数字越小越先输入）&#10;  <!--[slot:nopause]-->  输入完不暂停，直接进入下一段&#10;  <!--[slot:1:nopause]--> 组合使用&#10;  <!--[/slot]-->         片段结束"
               spellcheck="false"
             />
             <!-- Action markers help -->
@@ -1088,12 +1182,16 @@ onUnmounted(() => {
               </div>
               <div class="action-help-items">
                 <span class="action-tag tag-slot">&lt;!--[slot]--&gt;</span>
-                <span class="action-desc">代码片段起始</span>
+                <span class="action-desc">代码片段起始（默认顺序）</span>
+                <span class="action-tag tag-slot">&lt;!--[slot:2]--&gt;</span>
+                <span class="action-desc">指定输入顺序（数字越小越先）</span>
+                <span class="action-tag tag-slot-nopause">&lt;!--[slot:nopause]--&gt;</span>
+                <span class="action-desc">输入完不暂停，直接下一段</span>
                 <span class="action-tag tag-slot">&lt;!--[/slot]--&gt;</span>
                 <span class="action-desc">代码片段结束</span>
               </div>
               <div class="action-help-note">
-                框架（slot 外的代码）立即显示，片段（slot 内的代码）逐字输入
+                框架（slot 外的代码）立即显示，片段（slot 内的代码）按顺序逐字输入
               </div>
             </div>
           </div>
@@ -1811,6 +1909,11 @@ onUnmounted(() => {
 .tag-slot {
   background: rgba(137, 180, 250, 0.1);
   color: #89b4fa;
+}
+
+.tag-slot-nopause {
+  background: rgba(148, 226, 213, 0.1);
+  color: #94e2d5;
 }
 
 .action-help-divider {
