@@ -10,6 +10,24 @@ hljs.registerLanguage('xml', xml)
 hljs.registerLanguage('css', css)
 hljs.registerLanguage('javascript', javascript)
 
+// ==================== Types ====================
+type TypingMode = 'auto' | 'manual'
+type SpeedPreset = 'slow' | 'medium' | 'fast'
+
+// Line action parsed from comment markers
+interface LineAction {
+  type: 'pause' | 'quick' | 'ignore'
+  lineStart: number  // char index where line starts in target
+  lineEnd: number    // char index where line ends in target
+  cleanLine: string  // line content without the action marker
+}
+
+// Framework mode: a slot where code snippets will be typed into
+interface FrameworkSlot {
+  content: string          // The code snippet to type into this slot
+  insertPosition: number   // Character position in the framework base string
+}
+
 // ==================== Editor State ====================
 const code = ref('')
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
@@ -23,13 +41,38 @@ const pasteCode = ref('')
 const pasteTextareaRef = ref<HTMLTextAreaElement | null>(null)
 
 // Typing engine
-const targetCode = ref('')
+const targetCode = ref('')       // The cleaned code (action markers removed)
+const rawTargetCode = ref('')    // Original code with markers
 const currentIndex = ref(0)
 const isTyping = ref(false)
 const isPaused = ref(false)
-const typingSpeed = ref(50) // base delay in ms
 const typingTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 const typingComplete = ref(false)
+
+// New features inspired by typing-simulator & swimming
+const typingMode = ref<TypingMode>('auto')
+const speedPreset = ref<SpeedPreset>('medium')
+const typingSpeed = ref(80)       // base delay ms (derived from preset)
+const manualCharsPerKey = ref(1)  // chars to type per keypress in manual mode
+const lineActions = ref<LineAction[]>([])
+
+// Framework mode: display skeleton first, then type snippets at marked positions
+const isFrameworkMode = ref(false)
+const frameworkBase = ref('')              // The skeleton code (everything outside [slot] blocks)
+const frameworkSlots = ref<FrameworkSlot[]>([])
+const currentSlotIndex = ref(0)           // Which slot is currently being typed
+const currentSlotCharIndex = ref(0)       // Character position within current slot
+
+// ==================== Speed Preset Mapping ====================
+const speedPresetMap: Record<SpeedPreset, number> = {
+  slow: 150,
+  medium: 80,
+  fast: 30,
+}
+
+watch(speedPreset, (preset) => {
+  typingSpeed.value = speedPresetMap[preset]
+})
 
 // ==================== Computed Properties ====================
 const highlightedCode = computed(() => {
@@ -46,25 +89,46 @@ const lineNumbers = computed(() => {
   return lines.map((_, i) => i + 1)
 })
 
+const frameworkTypedChars = computed(() => {
+  let chars = 0
+  for (let i = 0; i < currentSlotIndex.value && i < frameworkSlots.value.length; i++) {
+    chars += frameworkSlots.value[i].content.length
+  }
+  if (currentSlotIndex.value < frameworkSlots.value.length) {
+    chars += currentSlotCharIndex.value
+  }
+  return chars
+})
+
+const frameworkTotalChars = computed(() => {
+  return frameworkSlots.value.reduce((sum, s) => sum + s.content.length, 0)
+})
+
 const typingProgress = computed(() => {
+  if (isFrameworkMode.value) {
+    if (frameworkTotalChars.value === 0) return 100
+    return Math.round((frameworkTypedChars.value / frameworkTotalChars.value) * 100)
+  }
   if (!targetCode.value) return 0
   return Math.round((currentIndex.value / targetCode.value.length) * 100)
 })
 
 const typingStatusText = computed(() => {
   if (typingComplete.value) return '已完成'
+  if (isFrameworkMode.value) {
+    const slotNum = Math.min(currentSlotIndex.value + 1, frameworkSlots.value.length)
+    const totalSlots = frameworkSlots.value.length
+    if (isPaused.value) return `片段 ${slotNum}/${totalSlots} · 按空格继续`
+    if (isTyping.value && typingMode.value === 'manual') return `片段 ${slotNum}/${totalSlots} · 按任意键输入`
+    if (isTyping.value) return `片段 ${slotNum}/${totalSlots} · 输入中...`
+    return '就绪'
+  }
   if (isPaused.value) return '已暂停'
-  if (isTyping.value) return '输入中...'
+  if (isTyping.value && typingMode.value === 'manual') return '手动模式 · 按任意键输入'
+  if (isTyping.value) return '自动输入中...'
   return '就绪'
 })
 
-const speedLabel = computed(() => {
-  if (typingSpeed.value <= 20) return '极快'
-  if (typingSpeed.value <= 40) return '快速'
-  if (typingSpeed.value <= 70) return '正常'
-  if (typingSpeed.value <= 120) return '慢速'
-  return '极慢'
-})
 
 // ==================== Editor Functions ====================
 function syncScroll() {
@@ -72,7 +136,6 @@ function syncScroll() {
     codeDisplayRef.value.scrollTop = textareaRef.value.scrollTop
     codeDisplayRef.value.scrollLeft = textareaRef.value.scrollLeft
   }
-  // Also sync line numbers
   if (textareaRef.value && lineNumbersRef.value) {
     lineNumbersRef.value.scrollTop = textareaRef.value.scrollTop
   }
@@ -96,42 +159,264 @@ function togglePreview() {
   previewExpanded.value = !previewExpanded.value
 }
 
-function scrollToBottom() {
+/**
+ * Scroll to keep current typing position visible (centered).
+ * Inspired by Swimming plugin's TextEditorRevealType.InCenter approach.
+ */
+function scrollToCursor() {
   nextTick(() => {
+    let targetLine: number
+
+    if (isFrameworkMode.value && currentSlotIndex.value < frameworkSlots.value.length) {
+      // In framework mode, scroll to the line where current slot is being typed
+      const currentCode = code.value
+      const slot = frameworkSlots.value[currentSlotIndex.value]
+      let insertPosInCode = slot.insertPosition
+      // Adjust for previously inserted slot content
+      for (let i = 0; i < currentSlotIndex.value; i++) {
+        insertPosInCode += frameworkSlots.value[i].content.length
+      }
+      insertPosInCode += currentSlotCharIndex.value
+      const codeUpToCursor = currentCode.substring(0, insertPosInCode)
+      targetLine = codeUpToCursor.split('\n').length
+    } else {
+      targetLine = code.value.split('\n').length
+    }
+
+    const lineHeight = 22
+    const targetScrollTop = Math.max(0, (targetLine * lineHeight) - 200)
+
     if (textareaRef.value) {
-      textareaRef.value.scrollTop = textareaRef.value.scrollHeight
+      textareaRef.value.scrollTop = targetScrollTop
     }
     if (codeDisplayRef.value) {
-      codeDisplayRef.value.scrollTop = codeDisplayRef.value.scrollHeight
+      codeDisplayRef.value.scrollTop = targetScrollTop
     }
     if (lineNumbersRef.value) {
-      lineNumbersRef.value.scrollTop = lineNumbersRef.value.scrollHeight
+      lineNumbersRef.value.scrollTop = targetScrollTop
     }
   })
 }
 
+// ==================== Line Action Parser ====================
+/**
+ * Parse action markers from code lines.
+ * Supported markers (inspired by typing-simulator):
+ *   <!--[pause]-->   Pause typing at this line
+ *   <!--[quick]-->   Instantly type this entire line
+ *   <!--[ignore]-->  Skip this line entirely
+ *
+ * Also supports // and # style comments:
+ *   //[pause]  //[quick]  //[ignore]
+ *   #[pause]   #[quick]   #[ignore]
+ */
+function parseAndCleanCode(rawCode: string): { cleanCode: string; actions: LineAction[] } {
+  const lines = rawCode.split('\n')
+  const actions: LineAction[] = []
+  const cleanLines: string[] = []
+  let charIndex = 0
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const actionMatch = line.match(/(?:<!--\[(pause|quick|ignore)\]-->|(?:\/\/|#)\[(pause|quick|ignore)\])\s*$/)
+
+    if (actionMatch) {
+      const actionType = (actionMatch[1] || actionMatch[2]) as 'pause' | 'quick' | 'ignore'
+      const cleanLine = line.replace(/\s*(?:<!--\[(pause|quick|ignore)\]-->|(?:\/\/|#)\[(pause|quick|ignore)\])\s*$/, '')
+
+      if (actionType === 'ignore') {
+        // Skip this line entirely — don't add to cleanLines
+        continue
+      }
+
+      cleanLines.push(cleanLine)
+      const lineStart = charIndex
+      charIndex += cleanLine.length + 1 // +1 for \n
+      actions.push({
+        type: actionType,
+        lineStart,
+        lineEnd: charIndex - 1,
+        cleanLine,
+      })
+    } else {
+      cleanLines.push(line)
+      charIndex += line.length + 1
+    }
+  }
+
+  return {
+    cleanCode: cleanLines.join('\n'),
+    actions,
+  }
+}
+
+/**
+ * Check if current typing position hits any line action.
+ * Returns the action if we're at the start of an action line.
+ */
+function getActionAtIndex(index: number): LineAction | null {
+  for (const action of lineActions.value) {
+    if (index === action.lineStart) {
+      return action
+    }
+  }
+  return null
+}
+
+// ==================== Framework Mode Parser ====================
+/**
+ * Parse framework code with [slot] markers.
+ * Content outside [slot]...[/slot] blocks is the "framework" (displayed instantly).
+ * Content inside [slot]...[/slot] blocks are "slots" (typed in sequentially).
+ *
+ * Supported marker formats:
+ *   <!--[slot]-->  ... <!--[/slot]-->
+ *   //[slot]       ... //[/slot]
+ *   #[slot]        ... #[/slot]
+ */
+function parseFrameworkCode(rawCode: string): {
+  framework: string
+  slots: FrameworkSlot[]
+  hasSlots: boolean
+} {
+  const lines = rawCode.split('\n')
+  const frameworkLines: string[] = []
+  const slots: FrameworkSlot[] = []
+  let inSlot = false
+  let currentSlotLines: string[] = []
+
+  const slotStartRe = /^\s*(?:<!--\[slot\]-->|(?:\/\/|#)\[slot\])\s*$/
+  const slotEndRe = /^\s*(?:<!--\[\/slot\]-->|(?:\/\/|#)\[\/slot\])\s*$/
+
+  for (const line of lines) {
+    if (slotStartRe.test(line)) {
+      inSlot = true
+      currentSlotLines = []
+      continue
+    }
+
+    if (slotEndRe.test(line)) {
+      if (inSlot && currentSlotLines.length > 0) {
+        const content = currentSlotLines.join('\n') + '\n'
+        const frameworkSoFar = frameworkLines.join('\n')
+        const insertPosition = frameworkSoFar.length + (frameworkLines.length > 0 ? 1 : 0)
+        slots.push({ content, insertPosition })
+      }
+      inSlot = false
+      continue
+    }
+
+    if (inSlot) {
+      currentSlotLines.push(line)
+    } else {
+      frameworkLines.push(line)
+    }
+  }
+
+  // Handle unclosed slot (treat remaining as slot content)
+  if (inSlot && currentSlotLines.length > 0) {
+    const content = currentSlotLines.join('\n') + '\n'
+    const frameworkSoFar = frameworkLines.join('\n')
+    const insertPosition = frameworkSoFar.length + (frameworkLines.length > 0 ? 1 : 0)
+    slots.push({ content, insertPosition })
+  }
+
+  return {
+    framework: frameworkLines.join('\n'),
+    slots,
+    hasSlots: slots.length > 0,
+  }
+}
+
+/**
+ * Build the full code string from framework base + typed slot content.
+ * Framework is always fully displayed; each slot shows only the typed portion.
+ */
+function buildCodeFromSlots(): string {
+  let result = ''
+  let frameworkPos = 0
+  const fw = frameworkBase.value
+  const slots = frameworkSlots.value
+
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i]
+    // Add framework content up to this slot's insertion point
+    result += fw.substring(frameworkPos, slot.insertPosition)
+    frameworkPos = slot.insertPosition
+
+    if (i < currentSlotIndex.value) {
+      // Previous slots: fully typed
+      result += slot.content
+    } else if (i === currentSlotIndex.value) {
+      // Current slot: partially typed
+      result += slot.content.substring(0, currentSlotCharIndex.value)
+    }
+    // Future slots: not yet typed, add nothing
+  }
+
+  // Add remaining framework content after last slot
+  result += fw.substring(frameworkPos)
+
+  return result
+}
+
 // ==================== Typing Simulation Engine ====================
+/**
+ * Natural typing delay with random variation.
+ * Inspired by typing-simulator's delayTyping: base speed * random factor,
+ * plus 10% chance of a longer "thinking" pause.
+ */
 function getRandomDelay(char: string, nextChar: string): number {
   const base = typingSpeed.value
-  // Add natural variation: -40% to +80%
-  const variation = base * (0.6 + Math.random() * 1.2)
+  let delay = base * (0.5 + Math.random())
 
-  // Longer pause after certain characters
-  if (char === '\n') return variation * 2.5 // Newline = longer pause
-  if (char === '>' || char === ';' || char === '}') return variation * 1.5
-  if (char === ' ' && nextChar === ' ') return variation * 0.3 // Fast for indentation
-  if (char === '<' || char === '{') return variation * 1.3
+  // 10% chance of a longer "thinking" pause (natural pattern from typing-simulator)
+  if (Math.random() < 0.1) {
+    delay += base * 2.5
+  }
 
-  return variation
+  // Character-specific timing
+  if (char === '\n') return delay * 2.2
+  if (char === '>' || char === ';' || char === '}' || char === ')') return delay * 1.4
+  if (char === ' ' && nextChar === ' ') return delay * 0.2  // Fast indentation
+  if (char === '<' || char === '{' || char === '(') return delay * 1.2
+  if (char === '=' || char === ':') return delay * 0.8
+
+  return delay
 }
 
 function typeNextChar() {
+  // Dispatch to framework mode if active
+  if (isFrameworkMode.value) {
+    typeNextSlotChar()
+    return
+  }
+
   if (!isTyping.value || isPaused.value) return
   if (currentIndex.value >= targetCode.value.length) {
-    // Typing complete
     isTyping.value = false
     typingComplete.value = true
     return
+  }
+
+  // Check for line actions
+  const action = getActionAtIndex(currentIndex.value)
+  if (action) {
+    if (action.type === 'pause') {
+      // Auto-pause at this line
+      isPaused.value = true
+      return
+    }
+    if (action.type === 'quick') {
+      // Instantly type the entire line
+      const lineContent = targetCode.value.substring(action.lineStart, action.lineEnd + 1)
+      code.value += lineContent
+      currentIndex.value = action.lineEnd + 1
+      scrollToCursor()
+      // Continue to next char after a small delay
+      typingTimer.value = setTimeout(typeNextChar, 50)
+      return
+    }
   }
 
   const char = targetCode.value[currentIndex.value]
@@ -139,13 +424,165 @@ function typeNextChar() {
   code.value += char
   currentIndex.value++
 
-  // Auto-scroll to keep current position visible
-  scrollToBottom()
+  scrollToCursor()
 
   const delay = getRandomDelay(char, nextChar)
   typingTimer.value = setTimeout(typeNextChar, delay)
 }
 
+/**
+ * Framework mode: type next character in the current slot.
+ * After a slot is fully typed, auto-pause before the next slot.
+ */
+function typeNextSlotChar() {
+  if (!isTyping.value || isPaused.value) return
+
+  const slots = frameworkSlots.value
+  if (currentSlotIndex.value >= slots.length) {
+    isTyping.value = false
+    typingComplete.value = true
+    return
+  }
+
+  const currentSlot = slots[currentSlotIndex.value]
+
+  if (currentSlotCharIndex.value >= currentSlot.content.length) {
+    // Current slot is complete, move to next
+    currentSlotIndex.value++
+    currentSlotCharIndex.value = 0
+
+    if (currentSlotIndex.value >= slots.length) {
+      isTyping.value = false
+      typingComplete.value = true
+      code.value = buildCodeFromSlots()
+      scrollToCursor()
+      return
+    }
+
+    // Auto-pause between slots
+    isPaused.value = true
+    code.value = buildCodeFromSlots()
+    scrollToCursor()
+    return
+  }
+
+  // Type next character
+  const char = currentSlot.content[currentSlotCharIndex.value]
+  const nextChar = currentSlot.content[currentSlotCharIndex.value + 1] || ''
+  currentSlotCharIndex.value++
+
+  // Rebuild code
+  code.value = buildCodeFromSlots()
+  scrollToCursor()
+
+  const delay = getRandomDelay(char, nextChar)
+  typingTimer.value = setTimeout(typeNextSlotChar, delay)
+}
+
+/**
+ * Manual mode: type N characters per keypress.
+ * Inspired by typing-simulator's manual mode where any key triggers next chars.
+ */
+function typeManualChunk() {
+  // Dispatch to framework mode if active
+  if (isFrameworkMode.value) {
+    typeManualSlotChunk()
+    return
+  }
+
+  if (!isTyping.value || typingComplete.value) return
+
+  // If paused due to [pause] action, resume first
+  if (isPaused.value) {
+    isPaused.value = false
+  }
+
+  const charsToType = manualCharsPerKey.value
+
+  for (let i = 0; i < charsToType; i++) {
+    if (currentIndex.value >= targetCode.value.length) {
+      isTyping.value = false
+      typingComplete.value = true
+      break
+    }
+
+    // Check for line actions
+    const action = getActionAtIndex(currentIndex.value)
+    if (action) {
+      if (action.type === 'pause') {
+        // In manual mode, a keypress at a [pause] line resumes and starts the line
+        // Don't break, just continue typing
+      }
+      if (action.type === 'quick') {
+        const lineContent = targetCode.value.substring(action.lineStart, action.lineEnd + 1)
+        code.value += lineContent
+        currentIndex.value = action.lineEnd + 1
+        scrollToCursor()
+        return
+      }
+    }
+
+    const char = targetCode.value[currentIndex.value]
+    code.value += char
+    currentIndex.value++
+  }
+
+  scrollToCursor()
+}
+
+/**
+ * Framework mode manual: type N characters per keypress within current slot.
+ */
+function typeManualSlotChunk() {
+  if (!isTyping.value || typingComplete.value) return
+
+  const slots = frameworkSlots.value
+  if (currentSlotIndex.value >= slots.length) {
+    isTyping.value = false
+    typingComplete.value = true
+    return
+  }
+
+  // If paused (between slots), resume
+  if (isPaused.value) {
+    isPaused.value = false
+  }
+
+  const charsToType = manualCharsPerKey.value
+
+  for (let i = 0; i < charsToType; i++) {
+    if (currentSlotIndex.value >= slots.length) {
+      isTyping.value = false
+      typingComplete.value = true
+      break
+    }
+
+    const currentSlot = slots[currentSlotIndex.value]
+
+    if (currentSlotCharIndex.value >= currentSlot.content.length) {
+      // Move to next slot
+      currentSlotIndex.value++
+      currentSlotCharIndex.value = 0
+
+      if (currentSlotIndex.value >= slots.length) {
+        isTyping.value = false
+        typingComplete.value = true
+        break
+      }
+
+      // Pause between slots even in manual mode
+      isPaused.value = true
+      break
+    }
+
+    currentSlotCharIndex.value++
+  }
+
+  code.value = buildCodeFromSlots()
+  scrollToCursor()
+}
+
+// ==================== Control Functions ====================
 function openPasteModal() {
   pasteCode.value = ''
   showPasteModal.value = true
@@ -162,16 +599,57 @@ function closePasteModal() {
 function startTyping() {
   if (!pasteCode.value.trim()) return
 
-  targetCode.value = pasteCode.value
-  currentIndex.value = 0
-  code.value = ''
-  isTyping.value = true
-  isPaused.value = false
-  typingComplete.value = false
-  showPasteModal.value = false
+  // Check for framework mode ([slot] markers present)
+  const { framework, slots, hasSlots } = parseFrameworkCode(pasteCode.value)
 
-  // Small delay before starting to type
-  typingTimer.value = setTimeout(typeNextChar, 500)
+  if (hasSlots) {
+    // --- Framework mode ---
+    isFrameworkMode.value = true
+    frameworkBase.value = framework
+    frameworkSlots.value = slots
+    currentSlotIndex.value = 0
+    currentSlotCharIndex.value = 0
+
+    rawTargetCode.value = pasteCode.value
+    targetCode.value = ''
+    lineActions.value = []
+    currentIndex.value = 0
+
+    // Display the framework skeleton immediately
+    code.value = buildCodeFromSlots()
+
+    isTyping.value = true
+    isPaused.value = false
+    typingComplete.value = false
+    showPasteModal.value = false
+
+    if (typingMode.value === 'auto') {
+      // Brief pause before starting to type first slot
+      typingTimer.value = setTimeout(typeNextSlotChar, 500)
+    }
+    // Manual mode: waits for keypresses
+  } else {
+    // --- Standard linear mode ---
+    isFrameworkMode.value = false
+    frameworkBase.value = ''
+    frameworkSlots.value = []
+
+    const { cleanCode, actions } = parseAndCleanCode(pasteCode.value)
+    rawTargetCode.value = pasteCode.value
+    targetCode.value = cleanCode
+    lineActions.value = actions
+    currentIndex.value = 0
+    code.value = ''
+    isTyping.value = true
+    isPaused.value = false
+    typingComplete.value = false
+    showPasteModal.value = false
+
+    if (typingMode.value === 'auto') {
+      typingTimer.value = setTimeout(typeNextChar, 500)
+    }
+    // Manual mode: waits for keypresses
+  }
 }
 
 function pauseTyping() {
@@ -185,7 +663,13 @@ function pauseTyping() {
 function resumeTyping() {
   if (!isTyping.value || !isPaused.value) return
   isPaused.value = false
-  typeNextChar()
+  if (typingMode.value === 'auto') {
+    if (isFrameworkMode.value) {
+      typeNextSlotChar()
+    } else {
+      typeNextChar()
+    }
+  }
 }
 
 function togglePause() {
@@ -205,7 +689,15 @@ function stopTyping() {
     typingTimer.value = null
   }
   targetCode.value = ''
+  rawTargetCode.value = ''
   currentIndex.value = 0
+  lineActions.value = []
+  // Reset framework state
+  isFrameworkMode.value = false
+  frameworkBase.value = ''
+  frameworkSlots.value = []
+  currentSlotIndex.value = 0
+  currentSlotCharIndex.value = 0
 }
 
 function finishInstantly() {
@@ -213,35 +705,99 @@ function finishInstantly() {
     clearTimeout(typingTimer.value)
     typingTimer.value = null
   }
-  code.value = targetCode.value
-  currentIndex.value = targetCode.value.length
+
+  if (isFrameworkMode.value) {
+    // Fill all slots completely
+    currentSlotIndex.value = frameworkSlots.value.length
+    currentSlotCharIndex.value = 0
+    // Build final code with all slots fully inserted
+    let result = ''
+    let frameworkPos = 0
+    for (const slot of frameworkSlots.value) {
+      result += frameworkBase.value.substring(frameworkPos, slot.insertPosition)
+      result += slot.content
+      frameworkPos = slot.insertPosition
+    }
+    result += frameworkBase.value.substring(frameworkPos)
+    code.value = result
+  } else {
+    code.value = targetCode.value
+    currentIndex.value = targetCode.value.length
+  }
+
   isTyping.value = false
   typingComplete.value = true
-  scrollToBottom()
+  scrollToCursor()
 }
 
-// Watch speed changes: if currently typing and not paused, restart timer with new speed
+// Switch between auto and manual mode mid-typing
+function switchMode(mode: TypingMode) {
+  if (typingMode.value === mode) return
+  typingMode.value = mode
+
+  if (isTyping.value && !isPaused.value && !typingComplete.value) {
+    if (mode === 'auto') {
+      // Switching to auto: start the timer
+      if (isFrameworkMode.value) {
+        typeNextSlotChar()
+      } else {
+        typeNextChar()
+      }
+    } else {
+      // Switching to manual: stop the timer
+      if (typingTimer.value) {
+        clearTimeout(typingTimer.value)
+        typingTimer.value = null
+      }
+    }
+  }
+}
+
+// Watch speed changes: if currently typing in auto mode, restart timer
 watch(typingSpeed, () => {
-  if (isTyping.value && !isPaused.value) {
+  if (isTyping.value && !isPaused.value && typingMode.value === 'auto') {
     if (typingTimer.value) {
       clearTimeout(typingTimer.value)
     }
-    typeNextChar()
+    if (isFrameworkMode.value) {
+      typeNextSlotChar()
+    } else {
+      typeNextChar()
+    }
   }
 })
 
-// Handle keyboard shortcut for paste modal
+// ==================== Keyboard Handling ====================
 function handleGlobalKeydown(e: KeyboardEvent) {
+  // Escape closes modal
   if (e.key === 'Escape' && showPasteModal.value) {
     closePasteModal()
+    return
   }
-  // Space to toggle pause when typing (not in modal)
-  if (e.code === 'Space' && isTyping.value && !showPasteModal.value) {
-    // Only if not focused on an input
-    const active = document.activeElement
-    if (active?.tagName !== 'TEXTAREA' && active?.tagName !== 'INPUT') {
-      e.preventDefault()
-      togglePause()
+
+  // Don't intercept if modal is open or focused on modal textarea
+  if (showPasteModal.value) return
+
+  // Manual mode: any key types the next chunk
+  if (isTyping.value && typingMode.value === 'manual' && !typingComplete.value) {
+    // Ignore modifier-only keys
+    if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'NumLock'].includes(e.key)) return
+    // Ignore Ctrl/Cmd combos (allow copy/paste etc)
+    if (e.ctrlKey || e.metaKey) return
+
+    e.preventDefault()
+    typeManualChunk()
+    return
+  }
+
+  // Auto mode: Space to toggle pause
+  if (isTyping.value && typingMode.value === 'auto' && !typingComplete.value) {
+    if (e.code === 'Space') {
+      const active = document.activeElement
+      if (active?.tagName !== 'TEXTAREA' && active?.tagName !== 'INPUT') {
+        e.preventDefault()
+        togglePause()
+      }
     }
   }
 }
@@ -289,56 +845,115 @@ onUnmounted(() => {
     <!-- Typing Control Bar -->
     <div class="typing-control-bar" v-if="isTyping || typingComplete">
       <div class="control-left">
+        <!-- Play/Pause (auto mode only) -->
         <button
-          v-if="!typingComplete"
+          v-if="!typingComplete && typingMode === 'auto'"
           class="ctrl-btn"
           @click="togglePause"
           :title="isPaused ? '继续 (Space)' : '暂停 (Space)'"
         >
-          <!-- Pause icon -->
           <svg v-if="!isPaused" viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
             <rect x="6" y="4" width="4" height="16" rx="1" />
             <rect x="14" y="4" width="4" height="16" rx="1" />
           </svg>
-          <!-- Play icon -->
           <svg v-else viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
             <polygon points="5 3 19 12 5 21 5 3" />
           </svg>
         </button>
+        <!-- Skip to end -->
         <button v-if="!typingComplete" class="ctrl-btn" @click="finishInstantly" title="立即完成">
           <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
             <polygon points="5 3 19 12 5 21 5 3" />
             <rect x="18" y="3" width="3" height="18" rx="1" />
           </svg>
         </button>
+        <!-- Stop -->
         <button class="ctrl-btn ctrl-btn-stop" @click="stopTyping" title="停止并清除">
           <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
             <rect x="4" y="4" width="16" height="16" rx="2" />
           </svg>
         </button>
-        <span class="typing-status" :class="{ 'status-complete': typingComplete, 'status-paused': isPaused }">
+
+        <span class="typing-status" :class="{
+          'status-complete': typingComplete,
+          'status-paused': isPaused,
+          'status-manual': typingMode === 'manual' && isTyping && !typingComplete
+        }">
           {{ typingStatusText }}
         </span>
       </div>
 
-      <div class="control-center">
-        <div class="speed-control" v-if="!typingComplete">
+      <div class="control-center" v-if="!typingComplete">
+        <!-- Mode Toggle -->
+        <div class="mode-toggle">
+          <button
+            class="mode-btn"
+            :class="{ active: typingMode === 'auto' }"
+            @click="switchMode('auto')"
+            title="自动模式：自动逐字输入"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <polygon points="5 3 19 12 5 21 5 3" />
+            </svg>
+            自动
+          </button>
+          <button
+            class="mode-btn"
+            :class="{ active: typingMode === 'manual' }"
+            @click="switchMode('manual')"
+            title="手动模式：按任意键触发输入"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3H6a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3h12a3 3 0 0 0 3-3 3 3 0 0 0-3-3z"/>
+            </svg>
+            手动
+          </button>
+        </div>
+
+        <!-- Speed presets (auto mode only) -->
+        <div class="speed-presets" v-if="typingMode === 'auto'">
           <span class="speed-label">速度</span>
+          <button
+            v-for="preset in (['slow', 'medium', 'fast'] as SpeedPreset[])"
+            :key="preset"
+            class="speed-preset-btn"
+            :class="{ active: speedPreset === preset }"
+            @click="speedPreset = preset"
+          >
+            {{ preset === 'slow' ? '慢' : preset === 'medium' ? '中' : '快' }}
+          </button>
           <input
             type="range"
             min="5"
-            max="200"
-            :value="200 - typingSpeed"
-            @input="typingSpeed = 200 - Number(($event.target as HTMLInputElement).value)"
+            max="250"
+            :value="250 - typingSpeed"
+            @input="typingSpeed = 250 - Number(($event.target as HTMLInputElement).value)"
             class="speed-slider"
+            title="微调速度"
           />
-          <span class="speed-value">{{ speedLabel }}</span>
+        </div>
+
+        <!-- Manual mode: chars per key -->
+        <div class="manual-config" v-if="typingMode === 'manual'">
+          <span class="speed-label">每次输入</span>
+          <button
+            v-for="n in [1, 3, 5, 10]"
+            :key="n"
+            class="speed-preset-btn"
+            :class="{ active: manualCharsPerKey === n }"
+            @click="manualCharsPerKey = n"
+          >
+            {{ n }}字
+          </button>
         </div>
       </div>
 
       <div class="control-right">
         <div class="progress-info">
-          <span class="progress-text">{{ currentIndex }} / {{ targetCode.length }}</span>
+          <span class="progress-text" v-if="isFrameworkMode">
+            {{ frameworkTypedChars }} / {{ frameworkTotalChars }}
+          </span>
+          <span class="progress-text" v-else>{{ currentIndex }} / {{ targetCode.length }}</span>
           <div class="progress-bar">
             <div class="progress-fill" :style="{ width: typingProgress + '%' }"></div>
           </div>
@@ -356,13 +971,11 @@ onUnmounted(() => {
 
       <!-- Code Layers -->
       <div class="code-area">
-        <!-- Highlighted display layer -->
         <pre
           ref="codeDisplayRef"
           class="code-highlight"
         ><code v-html="highlightedCode"></code></pre>
 
-        <!-- Transparent textarea on top for editing -->
         <textarea
           ref="textareaRef"
           v-model="code"
@@ -436,15 +1049,55 @@ onUnmounted(() => {
               </svg>
             </button>
           </div>
+
           <div class="modal-body">
             <textarea
               ref="pasteTextareaRef"
               v-model="pasteCode"
               class="paste-textarea"
-              placeholder="在此粘贴 HTML 代码...&#10;&#10;粘贴后点击「开始模拟」即可逐字打出代码，&#10;用于录制视频展示手打代码过程。"
+              placeholder="在此粘贴 HTML 代码...&#10;&#10;支持行尾添加特殊标记控制输入行为：&#10;  <!--[pause]-->  在此行暂停，等待手动继续&#10;  <!--[quick]-->  此行一次性输入（不逐字）&#10;  <!--[ignore]--> 跳过此行不输入&#10;&#10;框架模式 — 先展示骨架，再逐段输入：&#10;  <!--[slot]-->   代码片段开始&#10;  <!--[/slot]-->  代码片段结束"
               spellcheck="false"
             />
+            <!-- Action markers help -->
+            <div class="action-help">
+              <div class="action-help-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="16" x2="12" y2="12" />
+                  <line x1="12" y1="8" x2="12.01" y2="8" />
+                </svg>
+                行标记指令
+              </div>
+              <div class="action-help-items">
+                <span class="action-tag tag-pause">&lt;!--[pause]--&gt;</span>
+                <span class="action-desc">暂停输入</span>
+                <span class="action-tag tag-quick">&lt;!--[quick]--&gt;</span>
+                <span class="action-desc">瞬间输入整行</span>
+                <span class="action-tag tag-ignore">&lt;!--[ignore]--&gt;</span>
+                <span class="action-desc">跳过此行</span>
+              </div>
+              <div class="action-help-divider"></div>
+              <div class="action-help-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                  <line x1="3" y1="9" x2="21" y2="9" />
+                  <line x1="3" y1="15" x2="21" y2="15" />
+                  <line x1="9" y1="3" x2="9" y2="21" />
+                </svg>
+                框架模式
+              </div>
+              <div class="action-help-items">
+                <span class="action-tag tag-slot">&lt;!--[slot]--&gt;</span>
+                <span class="action-desc">代码片段起始</span>
+                <span class="action-tag tag-slot">&lt;!--[/slot]--&gt;</span>
+                <span class="action-desc">代码片段结束</span>
+              </div>
+              <div class="action-help-note">
+                框架（slot 外的代码）立即显示，片段（slot 内的代码）逐字输入
+              </div>
+            </div>
           </div>
+
           <div class="modal-footer">
             <div class="modal-footer-left">
               <span class="char-count" v-if="pasteCode">
@@ -452,6 +1105,23 @@ onUnmounted(() => {
               </span>
             </div>
             <div class="modal-footer-right">
+              <!-- Mode selection in modal -->
+              <div class="modal-mode-toggle">
+                <button
+                  class="modal-mode-btn"
+                  :class="{ active: typingMode === 'auto' }"
+                  @click="typingMode = 'auto'"
+                >
+                  自动模式
+                </button>
+                <button
+                  class="modal-mode-btn"
+                  :class="{ active: typingMode === 'manual' }"
+                  @click="typingMode = 'manual'"
+                >
+                  手动模式
+                </button>
+              </div>
               <button class="modal-btn modal-btn-cancel" @click="closePasteModal">取消</button>
               <button
                 class="modal-btn modal-btn-start"
@@ -578,6 +1248,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .ctrl-btn {
@@ -615,6 +1286,7 @@ onUnmounted(() => {
   color: #a6e3a1;
   font-family: system-ui, sans-serif;
   margin-left: 4px;
+  white-space: nowrap;
 }
 
 .typing-status.status-paused {
@@ -625,16 +1297,62 @@ onUnmounted(() => {
   color: #89b4fa;
 }
 
+.typing-status.status-manual {
+  color: #f5c2e7;
+}
+
 .control-center {
   flex: 1;
   display: flex;
   justify-content: center;
+  align-items: center;
+  gap: 16px;
 }
 
-.speed-control {
+/* Mode Toggle */
+.mode-toggle {
+  display: flex;
+  border-radius: 8px;
+  border: 1px solid #313244;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.mode-btn {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: system-ui, sans-serif;
+  border: none;
+  background: transparent;
+  color: #6c7086;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mode-btn:first-child {
+  border-right: 1px solid #313244;
+}
+
+.mode-btn.active {
+  background: rgba(203, 166, 247, 0.15);
+  color: #cba6f7;
+}
+
+.mode-btn:hover:not(.active) {
+  background: rgba(205, 214, 244, 0.05);
+  color: #a6adc8;
+}
+
+/* Speed Presets */
+.speed-presets,
+.manual-config {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .speed-label {
@@ -644,8 +1362,32 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+.speed-preset-btn {
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: system-ui, sans-serif;
+  border: 1px solid #313244;
+  border-radius: 6px;
+  background: transparent;
+  color: #6c7086;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.speed-preset-btn.active {
+  background: rgba(166, 227, 161, 0.12);
+  border-color: rgba(166, 227, 161, 0.3);
+  color: #a6e3a1;
+}
+
+.speed-preset-btn:hover:not(.active) {
+  background: rgba(205, 214, 244, 0.05);
+  color: #a6adc8;
+}
+
 .speed-slider {
-  width: 120px;
+  width: 80px;
   height: 4px;
   -webkit-appearance: none;
   appearance: none;
@@ -653,41 +1395,34 @@ onUnmounted(() => {
   border-radius: 2px;
   outline: none;
   cursor: pointer;
+  margin-left: 4px;
 }
 
 .speed-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   background: #cba6f7;
   cursor: pointer;
   border: 2px solid #1e1e2e;
-  box-shadow: 0 0 4px rgba(203, 166, 247, 0.4);
 }
 
 .speed-slider::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   background: #cba6f7;
   cursor: pointer;
   border: 2px solid #1e1e2e;
 }
 
-.speed-value {
-  font-size: 12px;
-  font-weight: 600;
-  color: #cba6f7;
-  font-family: system-ui, sans-serif;
-  min-width: 36px;
-  text-align: center;
-}
-
+/* Progress */
 .control-right {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .progress-info {
@@ -924,9 +1659,9 @@ onUnmounted(() => {
 }
 
 .modal-content {
-  width: 680px;
+  width: 720px;
   max-width: 90vw;
-  max-height: 80vh;
+  max-height: 85vh;
   background: #1e1e2e;
   border: 1px solid #313244;
   border-radius: 16px;
@@ -993,11 +1728,14 @@ onUnmounted(() => {
   flex: 1;
   padding: 16px 24px;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .paste-textarea {
   width: 100%;
-  height: 320px;
+  height: 280px;
   background: #11111b;
   border: 1px solid #313244;
   border-radius: 10px;
@@ -1022,12 +1760,86 @@ onUnmounted(() => {
   color: #45475a;
 }
 
+/* Action Markers Help */
+.action-help {
+  padding: 10px 14px;
+  background: rgba(203, 166, 247, 0.04);
+  border: 1px solid rgba(203, 166, 247, 0.1);
+  border-radius: 8px;
+}
+
+.action-help-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #a6adc8;
+  font-family: system-ui, sans-serif;
+  margin-bottom: 8px;
+}
+
+.action-help-items {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  align-items: center;
+}
+
+.action-tag {
+  font-size: 11px;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.tag-pause {
+  background: rgba(249, 226, 175, 0.1);
+  color: #f9e2af;
+}
+
+.tag-quick {
+  background: rgba(166, 227, 161, 0.1);
+  color: #a6e3a1;
+}
+
+.tag-ignore {
+  background: rgba(108, 112, 134, 0.15);
+  color: #6c7086;
+}
+
+.tag-slot {
+  background: rgba(137, 180, 250, 0.1);
+  color: #89b4fa;
+}
+
+.action-help-divider {
+  height: 1px;
+  background: rgba(203, 166, 247, 0.08);
+  margin: 8px 0;
+}
+
+.action-help-note {
+  font-size: 11px;
+  color: #585b70;
+  font-family: system-ui, sans-serif;
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.action-desc {
+  font-size: 12px;
+  color: #6c7086;
+  font-family: system-ui, sans-serif;
+}
+
 .modal-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 16px 24px;
   border-top: 1px solid #313244;
+  gap: 12px;
 }
 
 .modal-footer-left {
@@ -1045,6 +1857,39 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+/* Modal Mode Toggle */
+.modal-mode-toggle {
+  display: flex;
+  border-radius: 8px;
+  border: 1px solid #313244;
+  overflow: hidden;
+}
+
+.modal-mode-btn {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: system-ui, sans-serif;
+  border: none;
+  background: transparent;
+  color: #6c7086;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.modal-mode-btn:first-child {
+  border-right: 1px solid #313244;
+}
+
+.modal-mode-btn.active {
+  background: rgba(203, 166, 247, 0.12);
+  color: #cba6f7;
+}
+
+.modal-mode-btn:hover:not(.active) {
+  background: rgba(205, 214, 244, 0.05);
 }
 
 .modal-btn {
@@ -1155,7 +2000,7 @@ onUnmounted(() => {
   }
 
   .speed-slider {
-    width: 80px;
+    width: 60px;
   }
 
   .progress-bar {
@@ -1168,7 +2013,11 @@ onUnmounted(() => {
   }
 
   .paste-textarea {
-    height: 240px;
+    height: 200px;
+  }
+
+  .action-help-items {
+    grid-template-columns: 1fr;
   }
 }
 </style>
