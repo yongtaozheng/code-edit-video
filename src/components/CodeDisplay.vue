@@ -95,6 +95,18 @@ const splitCSS = ref('')
 const splitJS = ref('')
 const copiedSection = ref<'html' | 'css' | 'js' | ''>('')
 
+// ==================== Slot Config (One-Click) State ====================
+const showSlotConfigModal = ref(false)
+const slotConfigInput = ref('')           // Raw HTML pasted by user
+const slotConfigParsedHTML = ref('')       // Extracted HTML body content
+const slotConfigParsedCSS = ref('')        // Extracted CSS content
+const slotConfigParsedJS = ref('')         // Extracted JS content
+const slotConfigOrder = ref<('html' | 'css' | 'js')[]>(['html', 'css', 'js'])
+const slotConfigPauseBetween = ref(true)
+const slotConfigDragging = ref<'html' | 'css' | 'js' | null>(null)
+const slotConfigDragOver = ref<'html' | 'css' | 'js' | null>(null)
+const slotConfigCopied = ref(false)
+
 // ==================== Speed Preset Mapping ====================
 const speedPresetMap: Record<SpeedPreset, number> = {
   slow: 150,
@@ -941,6 +953,28 @@ function closePasteModal() {
 }
 
 // ==================== Content Split (CodePen) ====================
+
+/**
+ * Remove the common leading whitespace from every line of a code block.
+ * This is useful after extracting content from indented <style> / <script> / <body>
+ * blocks so the resulting code starts at column 0.
+ */
+function dedentCode(code: string): string {
+  const lines = code.split('\n')
+  // Find minimum indentation among non-empty lines
+  let minIndent = Infinity
+  for (const line of lines) {
+    if (line.trim().length === 0) continue // skip blank lines
+    const leadingSpaces = line.match(/^(\s*)/)
+    if (leadingSpaces) {
+      minIndent = Math.min(minIndent, leadingSpaces[1].length)
+    }
+  }
+  if (minIndent === 0 || minIndent === Infinity) return code
+  // Remove the common indentation from every line
+  return lines.map(line => line.slice(Math.min(minIndent, line.length))).join('\n')
+}
+
 // Parse the current code and split it into HTML, CSS, and JS sections.
 // CSS = content inside all style blocks; JS = content inside all script blocks;
 // HTML = everything else (wrapper tags stripped for clean CodePen output).
@@ -948,18 +982,18 @@ function splitCodeForCodePen(source: string) {
   const cssBlocks: string[] = []
   const jsBlocks: string[] = []
 
-  // Extract CSS
+  // Extract CSS (dedent to remove indentation inherited from parent tags)
   const styleBlockRe = new RegExp('<' + 'style' + '[^>]*>([\\s\\S]*?)</' + 'style>', 'gi')
   let match: RegExpExecArray | null
   while ((match = styleBlockRe.exec(source)) !== null) {
-    const content = match[1].trim()
+    const content = dedentCode(match[1]).trim()
     if (content) cssBlocks.push(content)
   }
 
-  // Extract JS
+  // Extract JS (dedent to remove indentation inherited from parent tags)
   const scriptBlockRe = new RegExp('<' + 'script' + '[^>]*>([\\s\\S]*?)</' + 'script>', 'gi')
   while ((match = scriptBlockRe.exec(source)) !== null) {
-    const content = match[1].trim()
+    const content = dedentCode(match[1]).trim()
     if (content) jsBlocks.push(content)
   }
 
@@ -980,8 +1014,8 @@ function splitCodeForCodePen(source: string) {
   html = html.replace(new RegExp('<' + 'title[^>]*>[\\s\\S]*?</' + 'title>', 'gi'), '')
   html = html.replace(new RegExp('<' + 'link[^>]*/?' + '>', 'gi'), '')
 
-  // Clean up excessive blank lines
-  html = html.replace(/\n{3,}/g, '\n\n').trim()
+  // Clean up excessive blank lines, dedent HTML, then trim
+  html = dedentCode(html.replace(/\n{3,}/g, '\n\n')).trim()
 
   return {
     html,
@@ -1050,6 +1084,268 @@ function openInCodePen() {
   document.body.appendChild(form)
   form.submit()
   document.body.removeChild(form)
+}
+
+// ==================== One-Click Slot Configuration ====================
+function openSlotConfigModal() {
+  slotConfigInput.value = ''
+  slotConfigParsedHTML.value = ''
+  slotConfigParsedCSS.value = ''
+  slotConfigParsedJS.value = ''
+  slotConfigOrder.value = ['html', 'css', 'js']
+  slotConfigPauseBetween.value = true
+  slotConfigDragging.value = null
+  slotConfigDragOver.value = null
+  slotConfigCopied.value = false
+  showSlotConfigModal.value = true
+}
+
+function closeSlotConfigModal() {
+  showSlotConfigModal.value = false
+  slotConfigDragging.value = null
+  slotConfigDragOver.value = null
+}
+
+/**
+ * Parse the pasted HTML code into HTML body / CSS / JS sections.
+ * Re-uses the same logic as splitCodeForCodePen().
+ */
+function parseSlotConfigInput() {
+  const src = slotConfigInput.value
+  if (!src.trim()) {
+    slotConfigParsedHTML.value = ''
+    slotConfigParsedCSS.value = ''
+    slotConfigParsedJS.value = ''
+    return
+  }
+  const result = splitCodeForCodePen(src)
+  slotConfigParsedHTML.value = result.html
+  slotConfigParsedCSS.value = result.css
+  slotConfigParsedJS.value = result.js
+}
+
+// Auto-parse when input changes
+watch(slotConfigInput, () => {
+  parseSlotConfigInput()
+  slotConfigCopied.value = false
+})
+
+function onSlotConfigDragStart(e: DragEvent, type: 'html' | 'css' | 'js') {
+  slotConfigDragging.value = type
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', type)
+  }
+}
+
+function onSlotConfigDragEnd() {
+  slotConfigDragging.value = null
+  slotConfigDragOver.value = null
+}
+
+function onSlotConfigDragEnter(type: 'html' | 'css' | 'js') {
+  if (slotConfigDragging.value && slotConfigDragging.value !== type) {
+    slotConfigDragOver.value = type
+  }
+}
+
+function onSlotConfigDragLeave(e: DragEvent, type: 'html' | 'css' | 'js') {
+  const related = e.relatedTarget as HTMLElement | null
+  const target = e.currentTarget as HTMLElement
+  if (!related || !target.contains(related)) {
+    if (slotConfigDragOver.value === type) {
+      slotConfigDragOver.value = null
+    }
+  }
+}
+
+function onSlotConfigDrop(e: DragEvent, targetType: 'html' | 'css' | 'js') {
+  e.preventDefault()
+  const dragged = slotConfigDragging.value
+  if (!dragged || dragged === targetType) return
+  const order = [...slotConfigOrder.value]
+  const fromIdx = order.indexOf(dragged)
+  const toIdx = order.indexOf(targetType)
+  order.splice(fromIdx, 1)
+  order.splice(toIdx, 0, dragged)
+  slotConfigOrder.value = order
+  slotConfigDragging.value = null
+  slotConfigDragOver.value = null
+}
+
+function moveSlotConfig(type: 'html' | 'css' | 'js', direction: 'up' | 'down') {
+  const order = [...slotConfigOrder.value]
+  const idx = order.indexOf(type)
+  if (direction === 'up' && idx > 0) {
+    ;[order[idx - 1], order[idx]] = [order[idx], order[idx - 1]]
+  } else if (direction === 'down' && idx < order.length - 1) {
+    ;[order[idx + 1], order[idx]] = [order[idx], order[idx + 1]]
+  }
+  slotConfigOrder.value = order
+}
+
+function getSlotConfigParsed(type: 'html' | 'css' | 'js'): string {
+  switch (type) {
+    case 'html': return slotConfigParsedHTML.value
+    case 'css': return slotConfigParsedCSS.value
+    case 'js': return slotConfigParsedJS.value
+  }
+}
+
+const slotConfigHasParsed = computed(() => {
+  return !!(slotConfigParsedHTML.value.trim() || slotConfigParsedCSS.value.trim() || slotConfigParsedJS.value.trim())
+})
+
+const slotConfigStats = computed(() => {
+  const stats: { type: string; chars: number; lines: number }[] = []
+  if (slotConfigParsedHTML.value.trim()) stats.push({ type: 'HTML', chars: slotConfigParsedHTML.value.length, lines: slotConfigParsedHTML.value.split('\n').length })
+  if (slotConfigParsedCSS.value.trim()) stats.push({ type: 'CSS', chars: slotConfigParsedCSS.value.length, lines: slotConfigParsedCSS.value.split('\n').length })
+  if (slotConfigParsedJS.value.trim()) stats.push({ type: 'JS', chars: slotConfigParsedJS.value.length, lines: slotConfigParsedJS.value.split('\n').length })
+  return stats
+})
+
+/**
+ * Generate slot-marked code by inserting [slot] markers into the original code.
+ * - CSS: wraps content inside <style> with CSS comment markers
+ * - JS: wraps content inside <script> with JS comment markers
+ * - HTML body: wraps body content (excluding script/style) with HTML comment markers
+ */
+const slotConfigGenerated = computed((): string => {
+  const src = slotConfigInput.value
+  if (!src.trim() || !slotConfigHasParsed.value) return ''
+
+  const order = slotConfigOrder.value
+  const hasCSS = !!slotConfigParsedCSS.value.trim()
+  const hasJS = !!slotConfigParsedJS.value.trim()
+  const hasHTML = !!slotConfigParsedHTML.value.trim()
+  const pauseStr = slotConfigPauseBetween.value ? '' : ':nopause'
+
+  // Assign order numbers only to non-empty sections
+  const activeOrder = order.filter(type =>
+    type === 'html' ? hasHTML : type === 'css' ? hasCSS : hasJS
+  )
+  const orderMap: Record<string, number> = {}
+  activeOrder.forEach((type, idx) => {
+    orderMap[type] = idx
+  })
+
+  if (activeOrder.length === 0) return src
+
+  let result = src
+
+  // 1. Insert CSS slot markers inside <style> tags
+  if (hasCSS && orderMap['css'] !== undefined) {
+    const styleRe = new RegExp('(<' + 'style' + '[^>]*>)([\\s\\S]*?)(</' + 'style>)', 'gi')
+    result = result.replace(styleRe, (_match, open: string, content: string, close: string) => {
+      const trimmed = content.trim()
+      if (!trimmed) return _match
+      // Strip leading/trailing newlines, then add explicit newlines
+      // so that slot markers are always on their own separate lines
+      const cleanContent = content.replace(/^\n+/, '').replace(/\n+$/, '')
+      return `${open}\n/*[slot:${orderMap['css']}${pauseStr}]*/\n${cleanContent}\n/*[/slot]*/\n${close}`
+    })
+  }
+
+  // 2. Insert JS slot markers inside <script> tags
+  if (hasJS && orderMap['js'] !== undefined) {
+    const scriptRe = new RegExp('(<' + 'script' + '[^>]*>)([\\s\\S]*?)(</' + 'script>)', 'gi')
+    result = result.replace(scriptRe, (_match, open: string, content: string, close: string) => {
+      const trimmed = content.trim()
+      if (!trimmed) return _match
+      // Strip leading/trailing newlines, then add explicit newlines
+      // so that slot markers are always on their own separate lines
+      const cleanContent = content.replace(/^\n+/, '').replace(/\n+$/, '')
+      return `${open}\n//[slot:${orderMap['js']}${pauseStr}]\n${cleanContent}\n//[/slot]\n${close}`
+    })
+  }
+
+  // 3. Insert HTML slot markers around body content (excluding style/script tags)
+  if (hasHTML && orderMap['html'] !== undefined) {
+    const bodyOpenRe = new RegExp('(<' + 'body' + '[^>]*>)', 'i')
+    const bodyCloseRe = new RegExp('(</' + 'body>)', 'i')
+    const bodyOpenMatch = bodyOpenRe.exec(result)
+    const bodyCloseMatch = bodyCloseRe.exec(result)
+
+    if (bodyOpenMatch && bodyCloseMatch) {
+      const bodyStart = bodyOpenMatch.index + bodyOpenMatch[0].length
+      const bodyEnd = bodyCloseMatch.index
+      const bodyContent = result.substring(bodyStart, bodyEnd)
+
+      // Find the region of body content that is NOT inside <script> or <style> tags
+      // Strategy: find the first non-whitespace content that isn't a script/style tag,
+      // and the last such content, then wrap that region
+      const scriptStyleRe = new RegExp('<' + '(?:script|style)' + '[^>]*>[\\s\\S]*?</' + '(?:script|style)>', 'gi')
+      const nonTagRegions: { start: number; end: number }[] = []
+      let lastEnd = 0
+      let m: RegExpExecArray | null
+      scriptStyleRe.lastIndex = 0
+      while ((m = scriptStyleRe.exec(bodyContent)) !== null) {
+        if (m.index > lastEnd) {
+          const segment = bodyContent.substring(lastEnd, m.index)
+          if (segment.trim()) {
+            nonTagRegions.push({ start: lastEnd, end: m.index })
+          }
+        }
+        lastEnd = m.index + m[0].length
+      }
+      // Remaining content after last script/style
+      if (lastEnd < bodyContent.length) {
+        const segment = bodyContent.substring(lastEnd)
+        if (segment.trim()) {
+          nonTagRegions.push({ start: lastEnd, end: bodyContent.length })
+        }
+      }
+
+      if (nonTagRegions.length > 0) {
+        // Wrap from the first non-tag region start to the last non-tag region end
+        const wrapStart = nonTagRegions[0].start
+        const wrapEnd = nonTagRegions[nonTagRegions.length - 1].end
+        const before = bodyContent.substring(0, wrapStart)
+        const wrapped = bodyContent.substring(wrapStart, wrapEnd)
+        const after = bodyContent.substring(wrapEnd)
+        // Strip leading/trailing newlines, then add explicit newlines
+        // so that slot markers are always on their own separate lines
+        const cleanWrapped = wrapped.replace(/^\n+/, '').replace(/\n+$/, '')
+        const cleanBefore = before.replace(/\n+$/, '')
+        const cleanAfter = after.replace(/^\n+/, '')
+
+        const newBodyContent = `${cleanBefore}\n<!--[slot:${orderMap['html']}${pauseStr}]-->\n${cleanWrapped}\n<!--[/slot]-->\n${cleanAfter}`
+        result = result.substring(0, bodyStart) + newBodyContent + result.substring(bodyEnd)
+      }
+    }
+  }
+
+  return result
+})
+
+async function copySlotConfigCode() {
+  const code = slotConfigGenerated.value
+  if (!code) return
+  try {
+    await navigator.clipboard.writeText(code)
+    slotConfigCopied.value = true
+    setTimeout(() => { slotConfigCopied.value = false }, 2000)
+  } catch {
+    const textarea = document.createElement('textarea')
+    textarea.value = code
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+    slotConfigCopied.value = true
+    setTimeout(() => { slotConfigCopied.value = false }, 2000)
+  }
+}
+
+/**
+ * Copy generated code to the paste modal and switch to it for immediate use.
+ */
+function useSlotConfigCode() {
+  const generated = slotConfigGenerated.value
+  if (!generated) return
+  showSlotConfigModal.value = false
+  pasteCode.value = generated
+  showPasteModal.value = true
 }
 
 async function startTyping() {
@@ -1465,6 +1761,15 @@ onUnmounted(() => {
             <rect x="14" y="14" width="7" height="7" rx="1" />
           </svg>
           <span>内容分隔</span>
+        </button>
+
+        <button class="slot-config-btn" @click="openSlotConfigModal" :disabled="isTyping && !typingComplete" title="一键配置 HTML / CSS / JS 插槽，自定义输入顺序">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+            <line x1="3" y1="9" x2="21" y2="9" />
+            <line x1="3" y1="15" x2="21" y2="15" />
+          </svg>
+          <span>插槽配置</span>
         </button>
 
         <button class="typing-btn" @click="openPasteModal" :disabled="isTyping && !typingComplete">
@@ -1977,6 +2282,209 @@ onUnmounted(() => {
                   <path d="M18.144 13.067v-2.134L16.55 12zm1.856 1.018V9.915a.636.636 0 0 0-.318-.55L12.317.315a.636.636 0 0 0-.635 0L4.317 5.365a.636.636 0 0 0-.317.55v8.17a.636.636 0 0 0 .317.55l7.365 5.05a.636.636 0 0 0 .635 0l7.365-5.05a.636.636 0 0 0 .318-.55zM12 14.52l-2.26-1.517L12 11.49l2.26 1.513zm-.635-6.71v-3.36L6.5 7.75l2.227 1.495zm1.27 0l3.365-2.3L6.5 7.75 8.727 9.245zm-6.405 3.173l-1.595 1.07V10.913zM5.856 13.067l3.59-2.41L12 12.174l-2.555 1.715zm1.273 1.498l3.506 2.353v-3.36zm5.506 2.353l3.506-2.353-3.506-2.362v4.715zm1.273-5.508l3.59 2.41 1.594-1.07z"/>
                 </svg>
                 在 CodePen 中打开
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- Slot Config Modal (One-Click) -->
+    <Teleport to="body">
+      <div class="modal-overlay" v-if="showSlotConfigModal" @click.self="closeSlotConfigModal">
+        <div class="slot-config-modal">
+          <div class="modal-header">
+            <div class="modal-title-group">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <line x1="3" y1="9" x2="21" y2="9" />
+                <line x1="3" y1="15" x2="21" y2="15" />
+              </svg>
+              <h3>插槽配置</h3>
+              <span class="slot-config-subtitle">粘贴完整 HTML 页面，自动识别并添加插槽标记</span>
+            </div>
+            <button class="modal-close" @click="closeSlotConfigModal">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+
+          <div class="slot-config-body">
+            <!-- Input Area -->
+            <div class="slot-config-section">
+              <div class="slot-config-section-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                  <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+                </svg>
+                粘贴完整 HTML 页面代码
+              </div>
+              <textarea
+                class="slot-config-input-textarea"
+                v-model="slotConfigInput"
+                placeholder="在此粘贴完整的 HTML 页面代码...&#10;&#10;例如：&#10;<!DOCTYPE html>&#10;<html>&#10;<head>&#10;  <style>&#10;    body { margin: 0; }&#10;  </style>&#10;</head>&#10;<body>&#10;  <div>Hello World</div>&#10;  <script>&#10;    console.log('hello')&#10;  </script>&#10;</body>&#10;</html>"
+                spellcheck="false"
+              />
+            </div>
+
+            <!-- Parsed Sections & Order Config -->
+            <div class="slot-config-section" v-if="slotConfigHasParsed">
+              <div class="slot-config-section-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
+                插槽顺序
+                <span class="slot-config-section-hint">拖拽或点击箭头调整输入顺序</span>
+              </div>
+              <div class="slot-config-order-list">
+                <div
+                  v-for="(type, idx) in slotConfigOrder"
+                  :key="type"
+                  class="slot-config-order-item"
+                  :class="{
+                    'slot-dragging': slotConfigDragging === type,
+                    'slot-drag-over': slotConfigDragOver === type,
+                    'slot-empty': !getSlotConfigParsed(type).trim(),
+                  }"
+                  draggable="true"
+                  @dragstart="onSlotConfigDragStart($event, type)"
+                  @dragend="onSlotConfigDragEnd"
+                  @dragover.prevent
+                  @dragenter="onSlotConfigDragEnter(type)"
+                  @dragleave="onSlotConfigDragLeave($event, type)"
+                  @drop="onSlotConfigDrop($event, type)"
+                >
+                  <span class="slot-drag-handle" title="拖拽调整顺序">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+                      <circle cx="9" cy="6" r="1.5" />
+                      <circle cx="15" cy="6" r="1.5" />
+                      <circle cx="9" cy="12" r="1.5" />
+                      <circle cx="15" cy="12" r="1.5" />
+                      <circle cx="9" cy="18" r="1.5" />
+                      <circle cx="15" cy="18" r="1.5" />
+                    </svg>
+                  </span>
+                  <span class="slot-order-badge" v-if="getSlotConfigParsed(type).trim()">{{ idx + 1 }}</span>
+                  <span class="slot-order-badge slot-order-badge-empty" v-else>-</span>
+                  <span class="slot-config-label" :class="'slot-label-' + type">
+                    <svg v-if="type === 'html'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                      <polyline points="16 18 22 12 16 6" />
+                      <polyline points="8 6 2 12 8 18" />
+                    </svg>
+                    <svg v-else-if="type === 'css'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                      <path d="M4 7l4.5 4.5L4 16" />
+                      <line x1="12" y1="16" x2="20" y2="16" />
+                    </svg>
+                    <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                      <path d="M17 11l-5-5" />
+                      <path d="M17 11H7" />
+                      <path d="M7 13l5 5" />
+                      <path d="M7 13h10" />
+                    </svg>
+                    {{ type === 'html' ? 'HTML' : type === 'css' ? 'CSS' : 'JavaScript' }}
+                  </span>
+                  <span class="slot-config-chars" v-if="getSlotConfigParsed(type).trim()">
+                    {{ getSlotConfigParsed(type).length }} 字符 · {{ getSlotConfigParsed(type).split('\n').length }} 行
+                  </span>
+                  <span class="slot-config-chars slot-config-chars-empty" v-else>无内容</span>
+                  <div class="slot-move-btns">
+                    <button class="slot-move-btn" @click.stop="moveSlotConfig(type, 'up')" :disabled="idx === 0" title="上移">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                        <polyline points="18 15 12 9 6 15" />
+                      </svg>
+                    </button>
+                    <button class="slot-move-btn" @click.stop="moveSlotConfig(type, 'down')" :disabled="idx === slotConfigOrder.length - 1" title="下移">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Pause Toggle -->
+              <div class="slot-config-pause-row">
+                <label class="record-toggle" title="每个插槽输入完成后暂停，等待手动继续">
+                  <input type="checkbox" v-model="slotConfigPauseBetween" class="record-toggle-input" />
+                  <span class="record-toggle-track">
+                    <span class="record-toggle-thumb"></span>
+                  </span>
+                  <span class="record-toggle-label">分段暂停（每个插槽输入完成后暂停）</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Generated Code Preview -->
+            <div class="slot-config-section" v-if="slotConfigGenerated">
+              <div class="slot-config-section-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <polyline points="16 18 22 12 16 6" />
+                  <polyline points="8 6 2 12 8 18" />
+                </svg>
+                生成预览
+                <span class="slot-config-section-hint">已在代码中插入 [slot] 标记</span>
+              </div>
+              <div class="slot-config-preview-wrapper">
+                <pre class="slot-config-preview">{{ slotConfigGenerated }}</pre>
+              </div>
+            </div>
+          </div>
+
+          <div class="slot-config-footer">
+            <div class="slot-config-footer-left">
+              <div class="slot-config-stats" v-if="slotConfigHasParsed">
+                <span
+                  v-for="stat in slotConfigStats"
+                  :key="stat.type"
+                  class="slot-stat"
+                  :class="'slot-stat-' + stat.type.toLowerCase()"
+                >
+                  {{ stat.type }} {{ stat.chars }} 字符
+                </span>
+              </div>
+              <div class="slot-config-order-preview" v-if="slotConfigHasParsed">
+                <span class="slot-order-label">输入顺序：</span>
+                <span
+                  v-for="(type, idx) in slotConfigOrder.filter(t => getSlotConfigParsed(t).trim())"
+                  :key="type"
+                  class="slot-order-item"
+                  :class="'slot-order-' + type"
+                >
+                  {{ idx > 0 ? ' → ' : '' }}{{ type.toUpperCase() }}
+                </span>
+              </div>
+            </div>
+            <div class="slot-config-footer-right">
+              <button class="modal-btn modal-btn-cancel" @click="closeSlotConfigModal">关闭</button>
+              <button
+                class="modal-btn slot-btn-copy"
+                :class="{ copied: slotConfigCopied }"
+                @click="copySlotConfigCode"
+                :disabled="!slotConfigGenerated"
+              >
+                <svg v-if="!slotConfigCopied" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                {{ slotConfigCopied ? '已复制' : '复制代码' }}
+              </button>
+              <button
+                class="modal-btn modal-btn-start"
+                @click="useSlotConfigCode"
+                :disabled="!slotConfigGenerated"
+                title="将生成的代码填入模拟手打"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                </svg>
+                使用此代码
               </button>
             </div>
           </div>
@@ -3323,6 +3831,398 @@ onUnmounted(() => {
   border-radius: 3px;
 }
 
+/* ==================== Slot Config Button (Header) ==================== */
+.slot-config-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(166, 227, 161, 0.3);
+  background: rgba(166, 227, 161, 0.1);
+  color: #a6e3a1;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: system-ui, sans-serif;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.slot-config-btn:hover:not(:disabled) {
+  background: rgba(166, 227, 161, 0.2);
+  border-color: rgba(166, 227, 161, 0.5);
+}
+
+.slot-config-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ==================== Slot Config Modal ==================== */
+.slot-config-modal {
+  width: 780px;
+  max-width: 95vw;
+  max-height: 90vh;
+  background: #1e1e2e;
+  border: 1px solid #313244;
+  border-radius: 16px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  animation: slideUp 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.slot-config-subtitle {
+  font-size: 12px;
+  font-weight: 400;
+  color: #6c7086;
+  margin-left: 4px;
+}
+
+.slot-config-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 20px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* Sections */
+.slot-config-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.slot-config-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #a6adc8;
+  font-family: system-ui, sans-serif;
+}
+
+.slot-config-section-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: #585b70;
+  margin-left: 4px;
+}
+
+/* Input Textarea */
+.slot-config-input-textarea {
+  width: 100%;
+  height: 200px;
+  background: #11111b;
+  border: 1px solid #313244;
+  border-radius: 10px;
+  padding: 14px 16px;
+  color: #cdd6f4;
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
+  font-size: 13px;
+  line-height: 20px;
+  resize: vertical;
+  outline: none;
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.slot-config-input-textarea:focus {
+  border-color: rgba(203, 166, 247, 0.5);
+}
+
+.slot-config-input-textarea::placeholder {
+  color: #45475a;
+}
+
+/* Order List */
+.slot-config-order-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.slot-config-order-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid #313244;
+  border-radius: 8px;
+  background: #181825;
+  cursor: grab;
+  user-select: none;
+  transition: all 0.2s;
+}
+
+.slot-config-order-item:active {
+  cursor: grabbing;
+}
+
+.slot-config-order-item.slot-dragging {
+  opacity: 0.4;
+  transform: scale(0.97);
+}
+
+.slot-config-order-item.slot-drag-over {
+  border-color: rgba(166, 227, 161, 0.5);
+  box-shadow: 0 0 0 2px rgba(166, 227, 161, 0.12);
+}
+
+.slot-config-order-item.slot-empty {
+  opacity: 0.4;
+}
+
+.slot-drag-handle {
+  display: flex;
+  align-items: center;
+  color: #45475a;
+  cursor: grab;
+  transition: color 0.2s;
+  flex-shrink: 0;
+}
+
+.slot-drag-handle:hover {
+  color: #a6adc8;
+}
+
+.slot-order-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: rgba(203, 166, 247, 0.15);
+  color: #cba6f7;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  flex-shrink: 0;
+}
+
+.slot-order-badge-empty {
+  background: rgba(108, 112, 134, 0.1);
+  color: #585b70;
+}
+
+.slot-config-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: system-ui, sans-serif;
+  min-width: 90px;
+}
+
+.slot-label-html { color: #fab387; }
+.slot-label-css  { color: #89b4fa; }
+.slot-label-js   { color: #f9e2af; }
+
+.slot-config-chars {
+  font-size: 11px;
+  color: #585b70;
+  font-family: system-ui, sans-serif;
+  flex: 1;
+}
+
+.slot-config-chars-empty {
+  color: #45475a;
+  font-style: italic;
+}
+
+.slot-move-btns {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.slot-move-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #585b70;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.slot-move-btn:hover:not(:disabled) {
+  background: rgba(205, 214, 244, 0.08);
+  border-color: #313244;
+  color: #cdd6f4;
+}
+
+.slot-move-btn:disabled {
+  opacity: 0.2;
+  cursor: not-allowed;
+}
+
+/* Pause Row */
+.slot-config-pause-row {
+  padding-top: 4px;
+}
+
+/* Generated Preview */
+.slot-config-preview-wrapper {
+  border: 1px solid #313244;
+  border-radius: 10px;
+  background: #11111b;
+  overflow: hidden;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.slot-config-preview {
+  margin: 0;
+  padding: 14px 16px;
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
+  font-size: 12px;
+  line-height: 19px;
+  color: #cdd6f4;
+  white-space: pre;
+  tab-size: 2;
+  word-break: break-all;
+  overflow-wrap: break-word;
+}
+
+/* Slot Config Footer */
+.slot-config-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-top: 1px solid #313244;
+  gap: 12px;
+}
+
+.slot-config-footer-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.slot-config-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.slot-config-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slot-stat {
+  font-size: 11px;
+  font-weight: 600;
+  font-family: system-ui, sans-serif;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.slot-stat-html {
+  background: rgba(250, 179, 135, 0.1);
+  color: #fab387;
+}
+
+.slot-stat-css {
+  background: rgba(137, 180, 250, 0.1);
+  color: #89b4fa;
+}
+
+.slot-stat-js {
+  background: rgba(249, 226, 175, 0.1);
+  color: #f9e2af;
+}
+
+.slot-config-order-preview {
+  display: flex;
+  align-items: center;
+  font-size: 11px;
+  font-family: system-ui, sans-serif;
+}
+
+.slot-order-label {
+  color: #585b70;
+  margin-right: 4px;
+}
+
+.slot-order-item {
+  font-weight: 600;
+}
+
+.slot-order-html { color: #fab387; }
+.slot-order-css  { color: #89b4fa; }
+.slot-order-js   { color: #f9e2af; }
+
+.slot-btn-copy {
+  background: rgba(166, 227, 161, 0.1);
+  border-color: rgba(166, 227, 161, 0.3);
+  color: #a6e3a1;
+}
+
+.slot-btn-copy:hover:not(:disabled) {
+  background: rgba(166, 227, 161, 0.2);
+  border-color: rgba(166, 227, 161, 0.5);
+}
+
+.slot-btn-copy.copied {
+  background: rgba(166, 227, 161, 0.15);
+  color: #a6e3a1;
+}
+
+/* Scrollbars */
+.slot-config-input-textarea::-webkit-scrollbar,
+.slot-config-preview-wrapper::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.slot-config-input-textarea::-webkit-scrollbar-track,
+.slot-config-preview-wrapper::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.slot-config-input-textarea::-webkit-scrollbar-thumb,
+.slot-config-preview-wrapper::-webkit-scrollbar-thumb {
+  background: #313244;
+  border-radius: 3px;
+}
+
+.slot-config-input-textarea::-webkit-scrollbar-thumb:hover,
+.slot-config-preview-wrapper::-webkit-scrollbar-thumb:hover {
+  background: #45475a;
+}
+
+.slot-config-body::-webkit-scrollbar {
+  width: 5px;
+}
+
+.slot-config-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.slot-config-body::-webkit-scrollbar-thumb {
+  background: #313244;
+  border-radius: 3px;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .preview-panel {
@@ -3401,6 +4301,35 @@ onUnmounted(() => {
 
   .split-subtitle {
     display: none;
+  }
+
+  .slot-config-modal {
+    width: 95vw;
+    max-height: 90vh;
+  }
+
+  .slot-config-subtitle,
+  .slot-config-section-hint {
+    display: none;
+  }
+
+  .slot-config-footer {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .slot-config-footer-right {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .slot-config-input-textarea {
+    height: 150px;
+  }
+
+  .slot-config-preview-wrapper {
+    max-height: 150px;
   }
 }
 </style>
