@@ -211,9 +211,25 @@ export function useTypingEngine(options: {
     }
 
     const char = targetCode.value[currentIndex.value]
-    const nextChar = targetCode.value[currentIndex.value + 1] || ''
     code.value += char
     currentIndex.value++
+
+    // 换行后，将下一行的前导空格一次性输入
+    if (char === '\n') {
+      let leadingSpaces = ''
+      while (
+        currentIndex.value < targetCode.value.length &&
+        (targetCode.value[currentIndex.value] === ' ' || targetCode.value[currentIndex.value] === '\t')
+      ) {
+        leadingSpaces += targetCode.value[currentIndex.value]
+        currentIndex.value++
+      }
+      if (leadingSpaces) {
+        code.value += leadingSpaces
+      }
+    }
+
+    const nextChar = targetCode.value[currentIndex.value] || ''
 
     options.scrollToCursor()
 
@@ -262,8 +278,19 @@ export function useTypingEngine(options: {
     }
 
     const char = currentSlot.content[currentSlotCharIndex.value]
-    const nextChar = currentSlot.content[currentSlotCharIndex.value + 1] || ''
     currentSlotCharIndex.value++
+
+    // 换行后，将下一行的前导空格一次性输入
+    if (char === '\n') {
+      while (
+        currentSlotCharIndex.value < currentSlot.content.length &&
+        (currentSlot.content[currentSlotCharIndex.value] === ' ' || currentSlot.content[currentSlotCharIndex.value] === '\t')
+      ) {
+        currentSlotCharIndex.value++
+      }
+    }
+
+    const nextChar = currentSlot.content[currentSlotCharIndex.value] || ''
 
     code.value = buildCodeFromSlots()
     options.scrollToCursor()
@@ -311,6 +338,21 @@ export function useTypingEngine(options: {
       const char = targetCode.value[currentIndex.value]
       code.value += char
       currentIndex.value++
+
+      // 换行后，将下一行的前导空格一次性输入（不计入本次按键字符数）
+      if (char === '\n') {
+        let leadingSpaces = ''
+        while (
+          currentIndex.value < targetCode.value.length &&
+          (targetCode.value[currentIndex.value] === ' ' || targetCode.value[currentIndex.value] === '\t')
+        ) {
+          leadingSpaces += targetCode.value[currentIndex.value]
+          currentIndex.value++
+        }
+        if (leadingSpaces) {
+          code.value += leadingSpaces
+        }
+      }
     }
 
     options.scrollToCursor()
@@ -364,6 +406,17 @@ export function useTypingEngine(options: {
       }
 
       currentSlotCharIndex.value++
+      const char = currentSlot.content[currentSlotCharIndex.value - 1]
+
+      // 换行后，将下一行的前导空格一次性输入（不计入本次按键字符数）
+      if (char === '\n') {
+        while (
+          currentSlotCharIndex.value < currentSlot.content.length &&
+          (currentSlot.content[currentSlotCharIndex.value] === ' ' || currentSlot.content[currentSlotCharIndex.value] === '\t')
+        ) {
+          currentSlotCharIndex.value++
+        }
+      }
     }
 
     code.value = buildCodeFromSlots()
