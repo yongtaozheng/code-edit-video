@@ -32,6 +32,7 @@ interface FrameworkSlot {
 
 // ==================== Editor State ====================
 const code = ref('')
+const previewCode = ref('')  // Only updated when code is safe to render (no broken JS/CSS)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const codeDisplayRef = ref<HTMLElement | null>(null)
 const lineNumbersRef = ref<HTMLElement | null>(null)
@@ -87,6 +88,83 @@ const speedPresetMap: Record<SpeedPreset, number> = {
 
 watch(speedPreset, (preset) => {
   typingSpeed.value = speedPresetMap[preset]
+})
+
+// ==================== Preview Safety Check ====================
+/**
+ * Check whether the current HTML is safe to render in the preview iframe.
+ * Incomplete script/style blocks or unbalanced braces inside them
+ * cause JS/CSS parse errors that blank the preview.  We only refresh the
+ * preview once these blocks are structurally complete.
+ *
+ * NOTE: regex patterns are built via `new RegExp()` to avoid vue-tsc
+ * misinterpreting literal "<scrip t>" / "<sty le>" as SFC tags.
+ */
+const _scriptOpen = '<' + 'script'
+const _scriptClose = '</' + 'script>'
+const _styleOpen = '<' + 'style'
+const _styleClose = '</' + 'style>'
+
+const _scriptOpenRe  = new RegExp(_scriptOpen + '[^>]*>', 'gi')
+const _scriptCloseRe = new RegExp(_scriptClose, 'gi')
+const _scriptBlockRe = new RegExp(_scriptOpen + '[^>]*>([\\s\\S]*?)' + _scriptClose, 'gi')
+
+const _styleOpenRe  = new RegExp(_styleOpen + '[^>]*>', 'gi')
+const _styleCloseRe = new RegExp(_styleClose, 'gi')
+const _styleBlockRe = new RegExp(_styleOpen + '[^>]*>([\\s\\S]*?)' + _styleClose, 'gi')
+
+function isCodeSafeForPreview(html: string): boolean {
+  // 1. Check that every opening script tag has a matching closing tag
+  _scriptOpenRe.lastIndex = 0
+  _scriptCloseRe.lastIndex = 0
+  const scriptOpens = html.match(_scriptOpenRe) || []
+  const scriptCloses = html.match(_scriptCloseRe) || []
+  if (scriptOpens.length !== scriptCloses.length) return false
+
+  // 2. Check brace balance inside each completed script block
+  _scriptBlockRe.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = _scriptBlockRe.exec(html)) !== null) {
+    let depth = 0
+    for (const ch of m[1]) {
+      if (ch === '{') depth++
+      if (ch === '}') depth--
+      if (depth < 0) return false   // more } than {
+    }
+    if (depth !== 0) return false
+  }
+
+  // 3. Check that every opening style tag has a matching closing tag
+  _styleOpenRe.lastIndex = 0
+  _styleCloseRe.lastIndex = 0
+  const styleOpens = html.match(_styleOpenRe) || []
+  const styleCloses = html.match(_styleCloseRe) || []
+  if (styleOpens.length !== styleCloses.length) return false
+
+  // 4. Check brace balance inside each completed style block
+  _styleBlockRe.lastIndex = 0
+  while ((m = _styleBlockRe.exec(html)) !== null) {
+    let depth = 0
+    for (const ch of m[1]) {
+      if (ch === '{') depth++
+      if (ch === '}') depth--
+      if (depth < 0) return false
+    }
+    if (depth !== 0) return false
+  }
+
+  return true
+}
+
+/**
+ * Watch code changes and only push to the preview iframe when the HTML
+ * is structurally safe.  This prevents white-screen flashes caused by
+ * half-typed JS functions or CSS rules.
+ */
+watch(code, (newCode) => {
+  if (isCodeSafeForPreview(newCode)) {
+    previewCode.value = newCode
+  }
 })
 
 // ==================== Computed Properties ====================
@@ -355,7 +433,8 @@ function parseFrameworkCode(rawCode: string): {
 
     if (slotEndRe.test(line)) {
       if (inSlot && currentSlotLines.length > 0) {
-        const content = currentSlotLines.join('\n') + '\n'
+        // Prepend \n so typing starts by creating a new empty line
+        const content = '\n' + currentSlotLines.join('\n') + '\n'
         const frameworkSoFar = frameworkLines.join('\n')
         const insertPosition = frameworkSoFar.length + (frameworkLines.length > 0 ? 1 : 0)
         slots.push({
@@ -379,7 +458,8 @@ function parseFrameworkCode(rawCode: string): {
 
   // Handle unclosed slot (treat remaining as slot content)
   if (inSlot && currentSlotLines.length > 0) {
-    const content = currentSlotLines.join('\n') + '\n'
+    // Prepend \n so typing starts by creating a new empty line
+    const content = '\n' + currentSlotLines.join('\n') + '\n'
     const frameworkSoFar = frameworkLines.join('\n')
     const insertPosition = frameworkSoFar.length + (frameworkLines.length > 0 ? 1 : 0)
     slots.push({
@@ -1319,7 +1399,7 @@ onUnmounted(() => {
       </div>
       <div class="preview-body">
         <iframe
-          :srcdoc="code"
+          :srcdoc="previewCode"
           sandbox="allow-scripts allow-modals"
           class="preview-iframe"
           title="HTML Preview"
