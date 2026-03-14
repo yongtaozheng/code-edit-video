@@ -112,8 +112,13 @@ async function handleStartTyping() {
   showPasteModal.value = false
 }
 
+// ==================== Canvas Recording Target ====================
+const containerRef = ref<HTMLElement | null>(null)
+
 // ==================== Lifecycle ====================
 onMounted(() => {
+  // Set the capture target for canvas-based recording (HTTP fallback)
+  recording.captureTargetRef.value = containerRef.value
   editorScroll.textareaRef.value?.focus()
   document.addEventListener('keydown', keyboard.handleGlobalKeydown)
 })
@@ -127,7 +132,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="code-display-container">
+  <div class="code-display-container" ref="containerRef">
     <!-- Header Bar -->
     <header class="header-bar">
       <div class="header-left">
@@ -148,6 +153,7 @@ onUnmounted(() => {
           <span class="record-btn-dot" :class="{ active: recording.isRecording.value }"></span>
           <span v-if="recording.isRecording.value" class="record-btn-time">{{ recording.recordingDuration.value }}</span>
           <span>{{ recording.isRecording.value ? '停止录屏' : '录屏' }}</span>
+          <span v-if="recording.isRecording.value && recording.recordingMode.value === 'canvas'" class="record-mode-badge">画布</span>
         </button>
 
         <button class="split-btn" @click="contentSplit.openSplitModal" :disabled="!code.trim()" title="将代码拆分为 HTML / CSS / JS 三部分">
@@ -436,6 +442,16 @@ onUnmounted(() => {
   font-weight: 600;
   color: #f38ba8;
   min-width: 36px;
+}
+
+.record-mode-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(250, 179, 135, 0.2);
+  color: #fab387;
+  line-height: 1.2;
 }
 
 .typing-btn {

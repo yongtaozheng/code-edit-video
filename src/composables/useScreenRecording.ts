@@ -1,24 +1,40 @@
 import { ref } from 'vue'
 
+type RecordingMode = 'display' | 'canvas'
+
+// Lazy-loaded html2canvas reference
+let html2canvasLib: ((element: HTMLElement, options?: any) => Promise<HTMLCanvasElement>) | null =
+  null
+
 export function useScreenRecording() {
-  // Public state
+  // ==================== Public State ====================
   const autoRecord = ref(false)
   const autoStopRecord = ref(true)
   const isRecording = ref(false)
   const isAutoRecording = ref(false)
   const recordingDuration = ref('00:00')
   const recordingError = ref('')
+  const recordingMode = ref<RecordingMode>('display')
+  const captureTargetRef = ref<HTMLElement | null>(null)
 
-  // Private state
+  // ==================== Private State ====================
   const mediaRecorder = ref<MediaRecorder | null>(null)
   const recordedChunks = ref<Blob[]>([])
   const mediaStream = ref<MediaStream | null>(null)
   const recordingStartTime = ref(0)
   const recordingTimerInterval = ref<ReturnType<typeof setInterval> | null>(null)
 
+  // Canvas recording private state
+  let captureTimerId: ReturnType<typeof setInterval> | null = null
+  let canvasEl: HTMLCanvasElement | null = null
+
+  // ==================== Shared Helpers ====================
+
   function updateRecordingDuration() {
     const elapsed = Math.floor((Date.now() - recordingStartTime.value) / 1000)
-    const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0')
+    const minutes = Math.floor(elapsed / 60)
+      .toString()
+      .padStart(2, '0')
     const seconds = (elapsed % 60).toString().padStart(2, '0')
     recordingDuration.value = `${minutes}:${seconds}`
   }
@@ -58,6 +74,14 @@ export function useScreenRecording() {
     recordedChunks.value = []
   }
 
+  function cleanupCanvasResources() {
+    if (captureTimerId) {
+      clearInterval(captureTimerId)
+      captureTimerId = null
+    }
+    canvasEl = null
+  }
+
   function cleanupRecordingResources() {
     isRecording.value = false
     isAutoRecording.value = false
@@ -66,10 +90,11 @@ export function useScreenRecording() {
       recordingTimerInterval.value = null
     }
     if (mediaStream.value) {
-      mediaStream.value.getTracks().forEach(track => track.stop())
+      mediaStream.value.getTracks().forEach((track) => track.stop())
       mediaStream.value = null
     }
     mediaRecorder.value = null
+    cleanupCanvasResources()
   }
 
   function stopRecordingAndDownload() {
@@ -86,27 +111,47 @@ export function useScreenRecording() {
     }
   }
 
-  function checkRecordingSupport(): string | null {
-    if (!window.isSecureContext) {
-      return '录屏功能需要在安全上下文（HTTPS）下使用。当前页面不是通过 HTTPS 访问的，请配置 HTTPS 后重试。'
+  // ==================== Mode Detection ====================
+
+  /**
+   * Detect the best available recording mode:
+   * - 'display': getDisplayMedia (requires HTTPS / secure context)
+   * - 'canvas':  html2canvas + canvas.captureStream() (works on HTTP)
+   * - null:      no recording support
+   */
+  function getAvailableMode(): RecordingMode | null {
+    // Prefer native screen capture when available (HTTPS or localhost)
+    if (
+      window.isSecureContext &&
+      typeof navigator.mediaDevices !== 'undefined' &&
+      typeof navigator.mediaDevices.getDisplayMedia === 'function'
+    ) {
+      return 'display'
     }
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-      return '当前浏览器不支持录屏功能（缺少 getDisplayMedia API），请使用最新版 Chrome / Edge 浏览器。'
+    // Fallback: canvas-based capture (works on plain HTTP)
+    if (
+      typeof MediaRecorder !== 'undefined' &&
+      'captureStream' in HTMLCanvasElement.prototype
+    ) {
+      return 'canvas'
     }
     return null
   }
 
-  async function startRecording(auto: boolean = false): Promise<boolean> {
-    if (isRecording.value) return true
-
-    recordingError.value = ''
-
-    const supportError = checkRecordingSupport()
-    if (supportError) {
-      recordingError.value = supportError
-      return false
+  function checkRecordingSupport(): string | null {
+    const mode = getAvailableMode()
+    if (!mode) {
+      return '当前浏览器不支持录屏功能，请使用最新版 Chrome / Edge 浏览器，或通过 HTTPS 访问。'
     }
+    if (mode === 'canvas' && !captureTargetRef.value) {
+      return '画布录屏模式需要指定录制目标元素。'
+    }
+    return null
+  }
 
+  // ==================== Display Recording (HTTPS) ====================
+
+  async function startDisplayRecording(auto: boolean): Promise<boolean> {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: { displaySurface: 'browser' } as MediaTrackConstraints,
@@ -141,6 +186,7 @@ export function useScreenRecording() {
       recorder.start(100)
       isRecording.value = true
       isAutoRecording.value = auto
+      recordingMode.value = 'display'
       recordingStartTime.value = Date.now()
       recordingDuration.value = '00:00'
       recordingTimerInterval.value = setInterval(updateRecordingDuration, 1000)
@@ -162,6 +208,132 @@ export function useScreenRecording() {
     }
   }
 
+  // ==================== Canvas Recording (HTTP fallback) ====================
+
+  async function startCanvasRecording(auto: boolean): Promise<boolean> {
+    const target = captureTargetRef.value
+    if (!target) {
+      recordingError.value = '录屏目标元素未设置。'
+      return false
+    }
+
+    try {
+      // Lazy load html2canvas only when needed
+      if (!html2canvasLib) {
+        const mod = await import('html2canvas')
+        html2canvasLib = mod.default
+      }
+      const html2canvas = html2canvasLib
+
+      const rect = target.getBoundingClientRect()
+      const scale = Math.min(window.devicePixelRatio, 2) // Cap at 2x for performance
+
+      // Create persistent canvas for recording
+      canvasEl = document.createElement('canvas')
+      canvasEl.width = Math.floor(rect.width * scale)
+      canvasEl.height = Math.floor(rect.height * scale)
+
+      // Render initial frame
+      await html2canvas(target, {
+        canvas: canvasEl,
+        scale,
+        useCORS: true,
+        logging: false,
+        backgroundColor: null,
+      })
+
+      // Create MediaStream from canvas (0 = manual frame control via requestFrame)
+      const stream = (canvasEl as any).captureStream(0) as MediaStream
+      mediaStream.value = stream
+
+      const mimeType = getSupportedMimeType()
+      const recorder = new MediaRecorder(stream, { mimeType })
+
+      recordedChunks.value = []
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordedChunks.value.push(event.data)
+        }
+      }
+
+      recorder.onstop = () => {
+        downloadRecording()
+        cleanupRecordingResources()
+      }
+
+      mediaRecorder.value = recorder
+      recorder.start(100)
+
+      // Continuous capture loop (~10 FPS)
+      let isCapturing = false
+      const CAPTURE_INTERVAL = 100
+
+      captureTimerId = setInterval(async () => {
+        if (isCapturing || !canvasEl || !isRecording.value) return
+        isCapturing = true
+        try {
+          // Adapt to resize
+          const currentRect = target.getBoundingClientRect()
+          const w = Math.floor(currentRect.width * scale)
+          const h = Math.floor(currentRect.height * scale)
+          if (canvasEl.width !== w || canvasEl.height !== h) {
+            canvasEl.width = w
+            canvasEl.height = h
+          }
+
+          await html2canvas(target, {
+            canvas: canvasEl,
+            scale,
+            useCORS: true,
+            logging: false,
+            backgroundColor: null,
+          })
+
+          // Signal new frame to captureStream
+          const track = stream.getVideoTracks()[0]
+          if (track && 'requestFrame' in track) {
+            ;(track as any).requestFrame()
+          }
+        } catch (e) {
+          console.warn('Canvas capture frame error:', e)
+        } finally {
+          isCapturing = false
+        }
+      }, CAPTURE_INTERVAL)
+
+      isRecording.value = true
+      isAutoRecording.value = auto
+      recordingMode.value = 'canvas'
+      recordingStartTime.value = Date.now()
+      recordingDuration.value = '00:00'
+      recordingTimerInterval.value = setInterval(updateRecordingDuration, 1000)
+
+      return true
+    } catch (err: any) {
+      console.warn('Canvas recording failed:', err)
+      recordingError.value = `画布录屏启动失败: ${err?.message || '未知错误'}`
+      cleanupRecordingResources()
+      return false
+    }
+  }
+
+  // ==================== Public Recording API ====================
+
+  async function startRecording(auto: boolean = false): Promise<boolean> {
+    if (isRecording.value) return true
+    recordingError.value = ''
+
+    const supportError = checkRecordingSupport()
+    if (supportError) {
+      recordingError.value = supportError
+      return false
+    }
+
+    const mode = getAvailableMode()!
+    return mode === 'display' ? startDisplayRecording(auto) : startCanvasRecording(auto)
+  }
+
   async function toggleManualRecording() {
     if (isRecording.value) {
       stopRecordingAndDownload()
@@ -177,6 +349,8 @@ export function useScreenRecording() {
     isAutoRecording,
     recordingDuration,
     recordingError,
+    recordingMode,
+    captureTargetRef,
     checkRecordingSupport,
     startRecording,
     toggleManualRecording,
