@@ -523,7 +523,23 @@ function buildCodeFromSlots(): string {
       result += slot.content
     } else if (i === currentActualIdx) {
       // This slot is currently being typed
-      result += slot.content.substring(0, currentSlotCharIndex.value)
+      const typedContent = slot.content.substring(0, currentSlotCharIndex.value)
+      result += typedContent
+
+      // When partially typed content doesn't end with a newline and the framework
+      // has content on the same line after the insertion point, add a temporary
+      // newline to push that trailing content to the next line. This prevents the
+      // trailing framework content (e.g. </div>) from following along on the same
+      // line as the characters being typed.
+      if (
+        typedContent.length > 0 &&
+        typedContent.length < slot.content.length &&
+        !typedContent.endsWith('\n') &&
+        fw.length > slot.insertPosition &&
+        fw.charAt(slot.insertPosition) !== '\n'
+      ) {
+        result += '\n'
+      }
     }
     // Slots not yet reached: add nothing
   }
