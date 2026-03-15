@@ -19,6 +19,7 @@ import PasteModal from './CodeDisplay/PasteModal.vue'
 import SplitModal from './CodeDisplay/SplitModal.vue'
 import SlotConfigModal from './CodeDisplay/SlotConfigModal.vue'
 import PreviewPanel from './CodeDisplay/PreviewPanel.vue'
+import ThemeSelector from './CodeDisplay/ThemeSelector.vue'
 
 // Initialize highlight.js languages
 initHighlighter()
@@ -182,6 +183,9 @@ onUnmounted(() => {
           </svg>
           <span>模拟手打</span>
         </button>
+
+        <ThemeSelector />
+
         <span class="lang-badge">HTML</span>
         <span class="line-count">{{ editorScroll.lineNumbers.value.length }} lines</span>
       </div>
@@ -336,8 +340,8 @@ onUnmounted(() => {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #1e1e2e;
-  color: #cdd6f4;
+  background: var(--editor-bg);
+  color: var(--editor-text);
   overflow: hidden;
   position: relative;
 }
@@ -348,8 +352,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 12px 20px;
-  background: #181825;
-  border-bottom: 1px solid #313244;
+  background: var(--editor-surface);
+  border-bottom: 1px solid var(--editor-border);
   flex-shrink: 0;
   z-index: 10;
 }
@@ -363,13 +367,13 @@ onUnmounted(() => {
 .header-icon {
   width: 20px;
   height: 20px;
-  color: #cba6f7;
+  color: var(--editor-accent);
 }
 
 .header-title {
   font-size: 15px;
   font-weight: 600;
-  color: #cdd6f4;
+  color: var(--editor-text);
   font-family: system-ui, -apple-system, sans-serif;
 }
 
@@ -386,9 +390,9 @@ onUnmounted(() => {
   gap: 6px;
   padding: 5px 14px;
   border-radius: 8px;
-  border: 1px solid #313244;
+  border: 1px solid var(--editor-border);
   background: rgba(205, 214, 244, 0.05);
-  color: #6c7086;
+  color: var(--editor-muted);
   font-size: 13px;
   font-weight: 600;
   font-family: system-ui, sans-serif;
@@ -417,7 +421,7 @@ onUnmounted(() => {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #6c7086;
+  background: var(--editor-muted);
   flex-shrink: 0;
   transition: background 0.2s;
 }
@@ -544,7 +548,7 @@ onUnmounted(() => {
 
 .line-count {
   font-size: 12px;
-  color: #6c7086;
+  color: var(--editor-muted);
   font-family: system-ui, sans-serif;
 }
 
@@ -560,8 +564,8 @@ onUnmounted(() => {
   width: 56px;
   flex-shrink: 0;
   padding: 16px 0;
-  background: #181825;
-  border-right: 1px solid #313244;
+  background: var(--editor-surface);
+  border-right: 1px solid var(--editor-border);
   overflow: hidden;
   user-select: none;
 }
@@ -571,7 +575,7 @@ onUnmounted(() => {
   line-height: 22px;
   font-size: 13px;
   font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
-  color: #45475a;
+  color: var(--editor-line-number);
   text-align: right;
   padding-right: 16px;
 }
@@ -604,7 +608,7 @@ onUnmounted(() => {
   background: transparent;
   pointer-events: none;
   z-index: 1;
-  color: #cdd6f4;
+  color: var(--editor-text);
 }
 
 .code-highlight code {
@@ -618,7 +622,7 @@ onUnmounted(() => {
 .code-input {
   background: transparent;
   color: transparent;
-  caret-color: #f5e0dc;
+  caret-color: var(--editor-cursor);
   border: none;
   outline: none;
   resize: none;
@@ -627,13 +631,13 @@ onUnmounted(() => {
 }
 
 .code-input::selection {
-  background: rgba(203, 166, 247, 0.2);
+  background: var(--editor-selection);
   -webkit-text-fill-color: transparent;
 }
 
 .code-input::placeholder {
-  -webkit-text-fill-color: #45475a;
-  color: #45475a;
+  -webkit-text-fill-color: var(--editor-placeholder);
+  color: var(--editor-placeholder);
 }
 
 /* Typing Cursor — use :deep() because the element is injected via v-html */
@@ -641,11 +645,11 @@ onUnmounted(() => {
   display: inline-block;
   width: 2px;
   height: 1.15em;
-  background-color: #f5e0dc;
+  background-color: var(--editor-cursor);
   animation: cursor-blink 1s steps(2) infinite;
   vertical-align: text-bottom;
   border-radius: 1px;
-  box-shadow: 0 0 4px rgba(245, 224, 220, 0.5);
+  box-shadow: 0 0 4px var(--editor-cursor-glow);
 }
 
 @keyframes cursor-blink {
@@ -667,13 +671,13 @@ onUnmounted(() => {
 
 .code-highlight::-webkit-scrollbar-thumb,
 .code-input::-webkit-scrollbar-thumb {
-  background: #313244;
+  background: var(--editor-scrollbar);
   border-radius: 4px;
 }
 
 .code-highlight::-webkit-scrollbar-thumb:hover,
 .code-input::-webkit-scrollbar-thumb:hover {
-  background: #45475a;
+  background: var(--editor-scrollbar-hover);
 }
 
 /* Recording Error Toast */

@@ -1,6 +1,6 @@
 :root {
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  color-scheme: dark;
+  /* color-scheme 由 useTheme 动态设置 */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -16,7 +16,7 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #1e1e2e;
+  background: var(--editor-bg, #1e1e2e);
 }
 
 #app {

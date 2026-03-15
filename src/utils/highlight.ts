@@ -2,7 +2,7 @@ import hljs from 'highlight.js/lib/core'
 import xml from 'highlight.js/lib/languages/xml'
 import css from 'highlight.js/lib/languages/css'
 import javascript from 'highlight.js/lib/languages/javascript'
-import 'highlight.js/styles/atom-one-dark.css'
+import { useTheme } from '../composables/useTheme'
 
 let initialized = false
 
@@ -11,6 +11,11 @@ export function initHighlighter(): void {
   hljs.registerLanguage('xml', xml)
   hljs.registerLanguage('css', css)
   hljs.registerLanguage('javascript', javascript)
+
+  // 初始化主题系统（加载已保存的 hljs CSS + 应用编辑器配色）
+  const { initTheme } = useTheme()
+  initTheme()
+
   initialized = true
 }
 

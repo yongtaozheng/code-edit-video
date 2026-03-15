@@ -35,20 +35,20 @@
   align-items: center;
   justify-content: space-between;
   padding: 18px 24px;
-  border-bottom: 1px solid #313244;
+  border-bottom: 1px solid var(--editor-border);
 }
 
 .modal-title-group {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: #cba6f7;
+  color: var(--editor-accent);
 }
 
 .modal-title-group h3 {
   font-size: 16px;
   font-weight: 700;
-  color: #cdd6f4;
+  color: var(--editor-text);
   font-family: system-ui, sans-serif;
   margin: 0;
 }
@@ -62,7 +62,7 @@
   border-radius: 8px;
   border: none;
   background: transparent;
-  color: #6c7086;
+  color: var(--editor-muted);
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -88,13 +88,13 @@
 
 .modal-btn-cancel {
   background: rgba(205, 214, 244, 0.05);
-  color: #6c7086;
-  border: 1px solid #313244;
+  color: var(--editor-muted);
+  border: 1px solid var(--editor-border);
 }
 
 .modal-btn-cancel:hover {
   background: rgba(205, 214, 244, 0.1);
-  color: #cdd6f4;
+  color: var(--editor-text);
 }
 
 .modal-btn-start {
@@ -121,7 +121,7 @@
   user-select: none;
   padding: 4px 10px;
   border-radius: 8px;
-  border: 1px solid #313244;
+  border: 1px solid var(--editor-border);
   transition: all 0.2s;
 }
 
@@ -139,7 +139,7 @@
   width: 28px;
   height: 16px;
   border-radius: 8px;
-  background: #313244;
+  background: var(--editor-border);
   transition: background 0.2s;
   flex-shrink: 0;
 }
@@ -155,7 +155,7 @@
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: #6c7086;
+  background: var(--editor-muted);
   transition: all 0.2s;
 }
 
@@ -165,7 +165,7 @@
 }
 
 .record-toggle-icon {
-  color: #6c7086;
+  color: var(--editor-muted);
   transition: color 0.2s;
   flex-shrink: 0;
 }
@@ -178,7 +178,7 @@
   font-size: 12px;
   font-weight: 600;
   font-family: system-ui, sans-serif;
-  color: #6c7086;
+  color: var(--editor-muted);
   white-space: nowrap;
   transition: color 0.2s;
 }

@@ -170,8 +170,8 @@ const emit = defineEmits<{
   align-items: center;
   justify-content: space-between;
   padding: 8px 20px;
-  background: #11111b;
-  border-bottom: 1px solid #313244;
+  background: var(--editor-surface-deep);
+  border-bottom: 1px solid var(--editor-border);
   flex-shrink: 0;
   gap: 16px;
 }
@@ -190,16 +190,16 @@ const emit = defineEmits<{
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  border: 1px solid #313244;
+  border: 1px solid var(--editor-border);
   background: rgba(205, 214, 244, 0.05);
-  color: #cdd6f4;
+  color: var(--editor-text);
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .ctrl-btn:hover {
   background: rgba(205, 214, 244, 0.12);
-  border-color: #45475a;
+  border-color: var(--editor-scrollbar-hover);
 }
 
 .ctrl-btn-stop {
@@ -236,7 +236,7 @@ const emit = defineEmits<{
 .mode-toggle {
   display: flex;
   border-radius: 8px;
-  border: 1px solid #313244;
+  border: 1px solid var(--editor-border);
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -251,14 +251,14 @@ const emit = defineEmits<{
   font-family: system-ui, sans-serif;
   border: none;
   background: transparent;
-  color: #6c7086;
+  color: var(--editor-muted);
   cursor: pointer;
   transition: all 0.15s;
 }
 
-.mode-btn:first-child { border-right: 1px solid #313244; }
-.mode-btn.active { background: rgba(203, 166, 247, 0.15); color: #cba6f7; }
-.mode-btn:hover:not(.active) { background: rgba(205, 214, 244, 0.05); color: #a6adc8; }
+.mode-btn:first-child { border-right: 1px solid var(--editor-border); }
+.mode-btn.active { background: rgba(203, 166, 247, 0.15); color: var(--editor-accent); }
+.mode-btn:hover:not(.active) { background: rgba(205, 214, 244, 0.05); color: var(--editor-text); }
 
 .speed-presets,
 .manual-config {
@@ -269,7 +269,7 @@ const emit = defineEmits<{
 
 .speed-label {
   font-size: 12px;
-  color: #6c7086;
+  color: var(--editor-muted);
   font-family: system-ui, sans-serif;
   white-space: nowrap;
 }
@@ -279,10 +279,10 @@ const emit = defineEmits<{
   font-size: 11px;
   font-weight: 600;
   font-family: system-ui, sans-serif;
-  border: 1px solid #313244;
+  border: 1px solid var(--editor-border);
   border-radius: 6px;
   background: transparent;
-  color: #6c7086;
+  color: var(--editor-muted);
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -293,14 +293,14 @@ const emit = defineEmits<{
   color: #a6e3a1;
 }
 
-.speed-preset-btn:hover:not(.active) { background: rgba(205, 214, 244, 0.05); color: #a6adc8; }
+.speed-preset-btn:hover:not(.active) { background: rgba(205, 214, 244, 0.05); color: var(--editor-text); }
 
 .speed-slider {
   width: 80px;
   height: 4px;
   -webkit-appearance: none;
   appearance: none;
-  background: #313244;
+  background: var(--editor-border);
   border-radius: 2px;
   outline: none;
   cursor: pointer;
@@ -313,18 +313,18 @@ const emit = defineEmits<{
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: #cba6f7;
+  background: var(--editor-accent);
   cursor: pointer;
-  border: 2px solid #1e1e2e;
+  border: 2px solid var(--editor-bg);
 }
 
 .speed-slider::-moz-range-thumb {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: #cba6f7;
+  background: var(--editor-accent);
   cursor: pointer;
-  border: 2px solid #1e1e2e;
+  border: 2px solid var(--editor-bg);
 }
 
 .control-right {
@@ -380,8 +380,8 @@ const emit = defineEmits<{
 }
 
 .progress-info { display: flex; align-items: center; gap: 10px; }
-.progress-text { font-size: 11px; color: #6c7086; font-family: ui-monospace, 'SF Mono', monospace; white-space: nowrap; }
-.progress-bar { width: 100px; height: 4px; background: #313244; border-radius: 2px; overflow: hidden; }
+.progress-text { font-size: 11px; color: var(--editor-muted); font-family: ui-monospace, 'SF Mono', monospace; white-space: nowrap; }
+.progress-bar { width: 100px; height: 4px; background: var(--editor-border); border-radius: 2px; overflow: hidden; }
 .progress-fill { height: 100%; background: linear-gradient(90deg, #cba6f7, #89b4fa); border-radius: 2px; transition: width 0.15s ease; }
 .progress-percent { font-size: 12px; font-weight: 600; color: #89b4fa; font-family: system-ui, sans-serif; min-width: 36px; text-align: right; }
 

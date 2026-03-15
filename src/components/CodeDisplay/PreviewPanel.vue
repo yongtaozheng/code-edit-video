@@ -182,8 +182,8 @@ watch(
   right: 20px;
   width: 380px;
   height: 280px;
-  background: #1e1e2e;
-  border: 1px solid #313244;
+  background: var(--editor-bg);
+  border: 1px solid var(--editor-border);
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
   z-index: 100;
@@ -219,13 +219,13 @@ watch(
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #585b70;
+  color: var(--editor-muted);
   transition: color 0.2s;
   border-radius: 12px 0 0 0;
 }
 
 .preview-resize-handle:hover {
-  color: #a6adc8;
+  color: var(--editor-text);
 }
 
 .preview-resize-handle svg {
@@ -237,15 +237,15 @@ watch(
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  background: #181825;
-  border-bottom: 1px solid #313244;
+  background: var(--editor-surface);
+  border-bottom: 1px solid var(--editor-border);
   cursor: pointer;
   user-select: none;
   flex-shrink: 0;
 }
 
 .preview-header:hover {
-  background: #1e1e2e;
+  background: var(--editor-bg);
 }
 
 .preview-header-left {
@@ -267,7 +267,7 @@ watch(
 .expand-btn {
   background: none;
   border: none;
-  color: #6c7086;
+  color: var(--editor-muted);
   cursor: pointer;
   padding: 4px;
   border-radius: 4px;
@@ -278,7 +278,7 @@ watch(
 }
 
 .expand-btn:hover {
-  color: #cdd6f4;
+  color: var(--editor-text);
   background: rgba(205, 214, 244, 0.1);
 }
 

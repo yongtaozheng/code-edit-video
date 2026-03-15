@@ -200,8 +200,8 @@ watch(() => props.show, (visible) => {
   width: 720px;
   max-width: 90vw;
   max-height: 85vh;
-  background: #1e1e2e;
-  border: 1px solid #313244;
+  background: var(--editor-bg);
+  border: 1px solid var(--editor-border);
   border-radius: 16px;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
   display: flex;
@@ -221,11 +221,11 @@ watch(() => props.show, (visible) => {
 .paste-textarea {
   width: 100%;
   height: 280px;
-  background: #11111b;
-  border: 1px solid #313244;
+  background: var(--editor-surface-deep);
+  border: 1px solid var(--editor-border);
   border-radius: 10px;
   padding: 16px;
-  color: #cdd6f4;
+  color: var(--editor-text);
   font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
   font-size: 13px;
   line-height: 20px;
@@ -239,11 +239,11 @@ watch(() => props.show, (visible) => {
 }
 
 .paste-textarea:focus {
-  border-color: rgba(203, 166, 247, 0.5);
+  border-color: var(--editor-accent);
 }
 
 .paste-textarea::placeholder {
-  color: #45475a;
+  color: var(--editor-placeholder);
 }
 
 .action-help {
@@ -296,7 +296,7 @@ watch(() => props.show, (visible) => {
 
 .action-desc {
   font-size: 12px;
-  color: #6c7086;
+  color: var(--editor-muted);
   font-family: system-ui, sans-serif;
 }
 
@@ -305,7 +305,7 @@ watch(() => props.show, (visible) => {
   align-items: center;
   justify-content: space-between;
   padding: 16px 24px;
-  border-top: 1px solid #313244;
+  border-top: 1px solid var(--editor-border);
   gap: 12px;
 }
 
@@ -316,7 +316,7 @@ watch(() => props.show, (visible) => {
 
 .char-count {
   font-size: 12px;
-  color: #6c7086;
+  color: var(--editor-muted);
   font-family: system-ui, sans-serif;
 }
 
@@ -329,7 +329,7 @@ watch(() => props.show, (visible) => {
 .modal-mode-toggle {
   display: flex;
   border-radius: 8px;
-  border: 1px solid #313244;
+  border: 1px solid var(--editor-border);
   overflow: hidden;
 }
 
@@ -340,18 +340,18 @@ watch(() => props.show, (visible) => {
   font-family: system-ui, sans-serif;
   border: none;
   background: transparent;
-  color: #6c7086;
+  color: var(--editor-muted);
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .modal-mode-btn:first-child {
-  border-right: 1px solid #313244;
+  border-right: 1px solid var(--editor-border);
 }
 
 .modal-mode-btn.active {
   background: rgba(203, 166, 247, 0.12);
-  color: #cba6f7;
+  color: var(--editor-accent);
 }
 
 .modal-mode-btn:hover:not(.active) {
@@ -366,7 +366,7 @@ watch(() => props.show, (visible) => {
 
 .paste-textarea::-webkit-scrollbar { width: 6px; }
 .paste-textarea::-webkit-scrollbar-track { background: transparent; }
-.paste-textarea::-webkit-scrollbar-thumb { background: #313244; border-radius: 3px; }
+.paste-textarea::-webkit-scrollbar-thumb { background: var(--editor-border); border-radius: 3px; }
 
 @media (max-width: 768px) {
   .modal-content { width: 95vw; max-height: 90vh; }

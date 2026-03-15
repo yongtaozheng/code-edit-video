@@ -260,46 +260,46 @@ const emit = defineEmits<{
   width: 780px;
   max-width: 95vw;
   max-height: 90vh;
-  background: #1e1e2e;
-  border: 1px solid #313244;
+  background: var(--editor-bg);
+  border: 1px solid var(--editor-border);
   border-radius: 16px;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
   display: flex;
   flex-direction: column;
   animation: slideUp 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.slot-config-subtitle { font-size: 12px; font-weight: 400; color: #6c7086; margin-left: 4px; }
+.slot-config-subtitle { font-size: 12px; font-weight: 400; color: var(--editor-muted); margin-left: 4px; }
 .slot-config-body { flex: 1; display: flex; flex-direction: column; gap: 16px; padding: 16px 20px; overflow-y: auto; min-height: 0; }
 .slot-config-section { display: flex; flex-direction: column; gap: 8px; }
-.slot-config-section-title { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: #a6adc8; font-family: system-ui, sans-serif; }
-.slot-config-section-hint { font-size: 11px; font-weight: 400; color: #585b70; margin-left: 4px; }
-.slot-config-input-textarea { width: 100%; height: 200px; background: #11111b; border: 1px solid #313244; border-radius: 10px; padding: 14px 16px; color: #cdd6f4; font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace; font-size: 13px; line-height: 20px; resize: vertical; outline: none; tab-size: 2; white-space: pre; overflow: auto; transition: border-color 0.2s; box-sizing: border-box; }
-.slot-config-input-textarea:focus { border-color: rgba(203, 166, 247, 0.5); }
-.slot-config-input-textarea::placeholder { color: #45475a; }
+.slot-config-section-title { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--editor-text); font-family: system-ui, sans-serif; }
+.slot-config-section-hint { font-size: 11px; font-weight: 400; color: var(--editor-muted); margin-left: 4px; }
+.slot-config-input-textarea { width: 100%; height: 200px; background: var(--editor-surface-deep); border: 1px solid var(--editor-border); border-radius: 10px; padding: 14px 16px; color: var(--editor-text); font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace; font-size: 13px; line-height: 20px; resize: vertical; outline: none; tab-size: 2; white-space: pre; overflow: auto; transition: border-color 0.2s; box-sizing: border-box; }
+.slot-config-input-textarea:focus { border-color: var(--editor-accent); }
+.slot-config-input-textarea::placeholder { color: var(--editor-placeholder); }
 .slot-config-order-list { display: flex; flex-direction: column; gap: 4px; }
-.slot-config-order-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid #313244; border-radius: 8px; background: #181825; cursor: grab; user-select: none; transition: all 0.2s; }
+.slot-config-order-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--editor-border); border-radius: 8px; background: var(--editor-surface); cursor: grab; user-select: none; transition: all 0.2s; }
 .slot-config-order-item:active { cursor: grabbing; }
 .slot-config-order-item.slot-dragging { opacity: 0.4; transform: scale(0.97); }
 .slot-config-order-item.slot-drag-over { border-color: rgba(166, 227, 161, 0.5); box-shadow: 0 0 0 2px rgba(166, 227, 161, 0.12); }
 .slot-config-order-item.slot-empty { opacity: 0.4; }
-.slot-drag-handle { display: flex; align-items: center; color: #45475a; cursor: grab; transition: color 0.2s; flex-shrink: 0; }
-.slot-drag-handle:hover { color: #a6adc8; }
-.slot-order-badge { display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 6px; background: rgba(203, 166, 247, 0.15); color: #cba6f7; font-size: 11px; font-weight: 700; font-family: ui-monospace, 'SF Mono', monospace; flex-shrink: 0; }
-.slot-order-badge-empty { background: rgba(108, 112, 134, 0.1); color: #585b70; }
+.slot-drag-handle { display: flex; align-items: center; color: var(--editor-placeholder); cursor: grab; transition: color 0.2s; flex-shrink: 0; }
+.slot-drag-handle:hover { color: var(--editor-text); }
+.slot-order-badge { display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 6px; background: rgba(203, 166, 247, 0.15); color: var(--editor-accent); font-size: 11px; font-weight: 700; font-family: ui-monospace, 'SF Mono', monospace; flex-shrink: 0; }
+.slot-order-badge-empty { background: rgba(108, 112, 134, 0.1); color: var(--editor-muted); }
 .slot-config-label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; font-family: system-ui, sans-serif; min-width: 90px; }
 .slot-label-html { color: #fab387; }
 .slot-label-css  { color: #89b4fa; }
 .slot-label-js   { color: #f9e2af; }
-.slot-config-chars { font-size: 11px; color: #585b70; font-family: system-ui, sans-serif; flex: 1; }
-.slot-config-chars-empty { color: #45475a; font-style: italic; }
+.slot-config-chars { font-size: 11px; color: var(--editor-muted); font-family: system-ui, sans-serif; flex: 1; }
+.slot-config-chars-empty { color: var(--editor-placeholder); font-style: italic; }
 .slot-move-btns { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
-.slot-move-btn { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: #585b70; cursor: pointer; transition: all 0.15s; }
-.slot-move-btn:hover:not(:disabled) { background: rgba(205, 214, 244, 0.08); border-color: #313244; color: #cdd6f4; }
+.slot-move-btn { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px; border: 1px solid transparent; background: transparent; color: var(--editor-muted); cursor: pointer; transition: all 0.15s; }
+.slot-move-btn:hover:not(:disabled) { background: rgba(205, 214, 244, 0.08); border-color: var(--editor-border); color: var(--editor-text); }
 .slot-move-btn:disabled { opacity: 0.2; cursor: not-allowed; }
 .slot-config-pause-row { padding-top: 4px; }
-.slot-config-preview-wrapper { border: 1px solid #313244; border-radius: 10px; background: #11111b; overflow: hidden; max-height: 200px; overflow-y: auto; }
-.slot-config-preview { margin: 0; padding: 14px 16px; font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace; font-size: 12px; line-height: 19px; color: #cdd6f4; white-space: pre; tab-size: 2; word-break: break-all; overflow-wrap: break-word; }
-.slot-config-footer { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-top: 1px solid #313244; gap: 12px; }
+.slot-config-preview-wrapper { border: 1px solid var(--editor-border); border-radius: 10px; background: var(--editor-surface-deep); overflow: hidden; max-height: 200px; overflow-y: auto; }
+.slot-config-preview { margin: 0; padding: 14px 16px; font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace; font-size: 12px; line-height: 19px; color: var(--editor-text); white-space: pre; tab-size: 2; word-break: break-all; overflow-wrap: break-word; }
+.slot-config-footer { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-top: 1px solid var(--editor-border); gap: 12px; }
 .slot-config-footer-left { display: flex; flex-direction: column; gap: 4px; }
 .slot-config-footer-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .slot-config-stats { display: flex; align-items: center; gap: 8px; }
@@ -308,7 +308,7 @@ const emit = defineEmits<{
 .slot-stat-css { background: rgba(137, 180, 250, 0.1); color: #89b4fa; }
 .slot-stat-js { background: rgba(249, 226, 175, 0.1); color: #f9e2af; }
 .slot-config-order-preview { display: flex; align-items: center; font-size: 11px; font-family: system-ui, sans-serif; }
-.slot-order-label { color: #585b70; margin-right: 4px; }
+.slot-order-label { color: var(--editor-muted); margin-right: 4px; }
 .slot-order-item { font-weight: 600; }
 .slot-order-html { color: #fab387; }
 .slot-order-css  { color: #89b4fa; }
@@ -318,11 +318,11 @@ const emit = defineEmits<{
 .slot-btn-copy.copied { background: rgba(166, 227, 161, 0.15); color: #a6e3a1; }
 .slot-config-input-textarea::-webkit-scrollbar, .slot-config-preview-wrapper::-webkit-scrollbar { width: 5px; height: 5px; }
 .slot-config-input-textarea::-webkit-scrollbar-track, .slot-config-preview-wrapper::-webkit-scrollbar-track { background: transparent; }
-.slot-config-input-textarea::-webkit-scrollbar-thumb, .slot-config-preview-wrapper::-webkit-scrollbar-thumb { background: #313244; border-radius: 3px; }
-.slot-config-input-textarea::-webkit-scrollbar-thumb:hover, .slot-config-preview-wrapper::-webkit-scrollbar-thumb:hover { background: #45475a; }
+.slot-config-input-textarea::-webkit-scrollbar-thumb, .slot-config-preview-wrapper::-webkit-scrollbar-thumb { background: var(--editor-border); border-radius: 3px; }
+.slot-config-input-textarea::-webkit-scrollbar-thumb:hover, .slot-config-preview-wrapper::-webkit-scrollbar-thumb:hover { background: var(--editor-scrollbar-hover); }
 .slot-config-body::-webkit-scrollbar { width: 5px; }
 .slot-config-body::-webkit-scrollbar-track { background: transparent; }
-.slot-config-body::-webkit-scrollbar-thumb { background: #313244; border-radius: 3px; }
+.slot-config-body::-webkit-scrollbar-thumb { background: var(--editor-border); border-radius: 3px; }
 
 @media (max-width: 768px) {
   .slot-config-modal { width: 95vw; max-height: 90vh; }

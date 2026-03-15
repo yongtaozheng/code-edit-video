@@ -170,8 +170,8 @@ const emit = defineEmits<{
   width: 960px;
   max-width: 95vw;
   max-height: 85vh;
-  background: #1e1e2e;
-  border: 1px solid #313244;
+  background: var(--editor-bg);
+  border: 1px solid var(--editor-border);
   border-radius: 16px;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
   display: flex;
@@ -182,7 +182,7 @@ const emit = defineEmits<{
 .split-subtitle {
   font-size: 12px;
   font-weight: 400;
-  color: #6c7086;
+  color: var(--editor-muted);
   margin-left: 4px;
 }
 
@@ -190,7 +190,7 @@ const emit = defineEmits<{
   flex: 1;
   display: flex;
   gap: 1px;
-  background: #313244;
+  background: var(--editor-border);
   overflow: hidden;
   min-height: 0;
 }
@@ -199,7 +199,7 @@ const emit = defineEmits<{
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: #1e1e2e;
+  background: var(--editor-bg);
   min-width: 0;
   overflow: hidden;
 }
@@ -209,8 +209,8 @@ const emit = defineEmits<{
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  background: #181825;
-  border-bottom: 1px solid #313244;
+  background: var(--editor-surface);
+  border-bottom: 1px solid var(--editor-border);
   flex-shrink: 0;
   gap: 8px;
 }
@@ -231,7 +231,7 @@ const emit = defineEmits<{
 
 .split-panel-lines {
   font-size: 11px;
-  color: #585b70;
+  color: var(--editor-muted);
   font-family: system-ui, sans-serif;
   white-space: nowrap;
   flex-shrink: 0;
@@ -243,9 +243,9 @@ const emit = defineEmits<{
   gap: 4px;
   padding: 4px 10px;
   border-radius: 6px;
-  border: 1px solid #313244;
+  border: 1px solid var(--editor-border);
   background: rgba(205, 214, 244, 0.05);
-  color: #6c7086;
+  color: var(--editor-muted);
   font-size: 11px;
   font-weight: 600;
   font-family: system-ui, sans-serif;
@@ -257,8 +257,8 @@ const emit = defineEmits<{
 
 .split-copy-btn:hover:not(:disabled) {
   background: rgba(205, 214, 244, 0.12);
-  border-color: #45475a;
-  color: #cdd6f4;
+  border-color: var(--editor-scrollbar-hover);
+  color: var(--editor-text);
 }
 
 .split-copy-btn:disabled {
@@ -285,7 +285,7 @@ const emit = defineEmits<{
   font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
   font-size: 12px;
   line-height: 20px;
-  color: #cdd6f4;
+  color: var(--editor-text);
   white-space: pre;
   tab-size: 2;
   word-break: break-all;
@@ -298,7 +298,7 @@ const emit = defineEmits<{
   justify-content: center;
   height: 100%;
   min-height: 120px;
-  color: #45475a;
+  color: var(--editor-scrollbar-hover);
   font-size: 13px;
   font-family: system-ui, sans-serif;
 }
@@ -308,7 +308,7 @@ const emit = defineEmits<{
   align-items: center;
   justify-content: space-between;
   padding: 14px 24px;
-  border-top: 1px solid #313244;
+  border-top: 1px solid var(--editor-border);
   gap: 12px;
 }
 
@@ -354,8 +354,8 @@ const emit = defineEmits<{
 
 .split-panel-code::-webkit-scrollbar { width: 5px; height: 5px; }
 .split-panel-code::-webkit-scrollbar-track { background: transparent; }
-.split-panel-code::-webkit-scrollbar-thumb { background: #313244; border-radius: 3px; }
-.split-panel-code::-webkit-scrollbar-thumb:hover { background: #45475a; }
+.split-panel-code::-webkit-scrollbar-thumb { background: var(--editor-border); border-radius: 3px; }
+.split-panel-code::-webkit-scrollbar-thumb:hover { background: var(--editor-scrollbar-hover); }
 
 @media (max-width: 768px) {
   .split-modal-content { width: 95vw; max-height: 90vh; }
