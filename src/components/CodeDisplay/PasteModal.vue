@@ -3,6 +3,26 @@ import { ref, watch, nextTick } from 'vue'
 import type { TypingMode } from '../../types'
 import '../../assets/modal-shared.css'
 
+const pasteTextareaPlaceholder = [
+  '在此粘贴代码...',
+  '',
+  '支持行尾添加特殊标记控制输入行为：',
+  '  <!--[pause]-->  在此行暂停，等待手动继续',
+  '  /*[pause]*/    CSS 注释风格',
+  '  //[pause]      JS 注释风格',
+  '  同理支持 [quick]（瞬间输入）和 [ignore]（跳过）',
+  '',
+  '框架模式 — 先展示骨架，再逐段输入：',
+  '  <!--[slot]-->          默认顺序',
+  '  /*[slot:2]*/           指定输入顺序',
+  '  //[slot:nopause]       输入完不暂停',
+  '  <!--[slot:1:nopause]--> 组合使用',
+  '  <!--[/slot]-->         片段结束',
+  '',
+  '注释中间允许空格：',
+  '  <!--  [slot]  -->   /*  [slot]  */   //  [slot]',
+].join('\n')
+
 const props = defineProps<{
   show: boolean
   pasteCode: string
@@ -57,7 +77,7 @@ watch(() => props.show, (visible) => {
             :value="pasteCode"
             @input="emit('update:pasteCode', ($event.target as HTMLTextAreaElement).value)"
             class="paste-textarea"
-            placeholder="在此粘贴代码...&#10;&#10;支持行尾添加特殊标记控制输入行为：&#10;  <!--[pause]-->  在此行暂停，等待手动继续&#10;  /*[pause]*/    CSS 注释风格&#10;  //[pause]      JS 注释风格&#10;  同理支持 [quick]（瞬间输入）和 [ignore]（跳过）&#10;&#10;框架模式 — 先展示骨架，再逐段输入：&#10;  <!--[slot]-->          默认顺序&#10;  /*[slot:2]*/           指定输入顺序&#10;  //[slot:nopause]       输入完不暂停&#10;  <!--[slot:1:nopause]--> 组合使用&#10;  <!--[/slot]-->         片段结束&#10;&#10;注释中间允许空格：&#10;  <!--  [slot]  -->   /*  [slot]  */   //  [slot]"
+            :placeholder="pasteTextareaPlaceholder"
             spellcheck="false"
           />
           <!-- Action markers help -->

@@ -1,6 +1,26 @@
 <script setup lang="ts">
 import '../../assets/modal-shared.css'
 
+const inputPlaceholder = [
+  '在此粘贴完整的 HTML 页面代码...',
+  '',
+  '例如：',
+  '<!DOCTYPE html>',
+  '<html>',
+  '<head>',
+  '  <style>',
+  '    body { margin: 0; }',
+  '  </style>',
+  '</head>',
+  '<body>',
+  '  <div>Hello World</div>',
+  '  <script>',
+  "    console.log('hello')",
+  '  </' + 'script>',
+  '</body>',
+  '</html>',
+].join('\n')
+
 defineProps<{
   show: boolean
   slotConfigInput: string
@@ -66,7 +86,7 @@ const emit = defineEmits<{
               class="slot-config-input-textarea"
               :value="slotConfigInput"
               @input="emit('update:slotConfigInput', ($event.target as HTMLTextAreaElement).value)"
-              placeholder="在此粘贴完整的 HTML 页面代码...&#10;&#10;例如：&#10;<!DOCTYPE html>&#10;<html>&#10;<head>&#10;  <style>&#10;    body { margin: 0; }&#10;  </style>&#10;</head>&#10;<body>&#10;  <div>Hello World</div>&#10;  <script>&#10;    console.log('hello')&#10;  </script>&#10;</body>&#10;</html>"
+              :placeholder="inputPlaceholder"
               spellcheck="false"
             />
           </div>
