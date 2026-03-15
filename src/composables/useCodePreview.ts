@@ -8,12 +8,19 @@ const _styleClose = '</' + 'style>'
 
 const _scriptOpenRe  = new RegExp(_scriptOpen + '[^>]*>', 'gi')
 const _scriptCloseRe = new RegExp(_scriptClose, 'gi')
-const _scriptBlockRe = new RegExp(_scriptOpen + '[^>]*>([\\s\\S]*?)' + _scriptClose, 'gi')
 
 const _styleOpenRe  = new RegExp(_styleOpen + '[^>]*>', 'gi')
 const _styleCloseRe = new RegExp(_styleClose, 'gi')
-const _styleBlockRe = new RegExp(_styleOpen + '[^>]*>([\\s\\S]*?)' + _styleClose, 'gi')
 
+/**
+ * Check if the HTML is safe for preview rendering.
+ *
+ * Only validates that opening and closing tags are balanced (script & style).
+ * Brace-depth checks inside script blocks have been removed because they are
+ * too restrictive during live editing — while the user types, braces are
+ * almost always temporarily unbalanced, which would prevent the preview from
+ * updating until the block is complete.
+ */
 function isCodeSafeForPreview(html: string): boolean {
   _scriptOpenRe.lastIndex = 0
   _scriptCloseRe.lastIndex = 0
@@ -21,34 +28,11 @@ function isCodeSafeForPreview(html: string): boolean {
   const scriptCloses = html.match(_scriptCloseRe) || []
   if (scriptOpens.length !== scriptCloses.length) return false
 
-  _scriptBlockRe.lastIndex = 0
-  let m: RegExpExecArray | null
-  while ((m = _scriptBlockRe.exec(html)) !== null) {
-    let depth = 0
-    for (const ch of m[1]) {
-      if (ch === '{') depth++
-      if (ch === '}') depth--
-      if (depth < 0) return false
-    }
-    if (depth !== 0) return false
-  }
-
   _styleOpenRe.lastIndex = 0
   _styleCloseRe.lastIndex = 0
   const styleOpens = html.match(_styleOpenRe) || []
   const styleCloses = html.match(_styleCloseRe) || []
   if (styleOpens.length !== styleCloses.length) return false
-
-  _styleBlockRe.lastIndex = 0
-  while ((m = _styleBlockRe.exec(html)) !== null) {
-    let depth = 0
-    for (const ch of m[1]) {
-      if (ch === '{') depth++
-      if (ch === '}') depth--
-      if (depth < 0) return false
-    }
-    if (depth !== 0) return false
-  }
 
   return true
 }

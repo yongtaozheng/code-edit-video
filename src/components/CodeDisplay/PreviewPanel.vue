@@ -16,90 +16,95 @@ const emit = defineEmits<{
 
 const iframeRef = ref<HTMLIFrameElement | null>(null)
 let initialized = false
+let lastScriptContent = ''
+
+const _sOpen = '<' + 'script'
+const _sClose = '</' + 'script>'
+const _scriptBlockRe = new RegExp(_sOpen + '[^>]*>([\\s\\S]*?)' + _sClose, 'gi')
 
 /**
- * Reactivate scripts inside a container.
- * Scripts inserted via innerHTML won't execute — we need to
- * replace them with freshly created <script> elements.
+ * Extract the concatenated text content of all <script> blocks.
+ * Used to detect whether script logic has actually changed between updates.
  */
-function reactivateScripts(doc: Document, container: HTMLElement) {
-  container.querySelectorAll('script').forEach(oldScript => {
-    const newScript = doc.createElement('script')
-    for (const attr of Array.from(oldScript.attributes)) {
-      newScript.setAttribute(attr.name, attr.value)
-    }
-    newScript.textContent = oldScript.textContent || ''
-    oldScript.parentNode?.replaceChild(newScript, oldScript)
-  })
+function extractScriptContent(html: string): string {
+  _scriptBlockRe.lastIndex = 0
+  let content = ''
+  let m: RegExpExecArray | null
+  while ((m = _scriptBlockRe.exec(html)) !== null) {
+    content += m[1]
+  }
+  return content
 }
 
 /**
- * Seamless iframe update: manipulate the iframe's document DOM directly
- * to avoid the full-page navigation flicker caused by srcdoc changes.
+ * Preview update strategy:
+ *
+ * - First render (no scripts): doc.open/write/close.
+ * - First render (has scripts) OR script content changed:
+ *     → iframe.srcdoc = html  (full page refresh, most reliable for
+ *       canvas/rAF/animation scripts — the browser handles execution).
+ * - Scripts exist but unchanged (CSS-only edit):
+ *     → update <head> only (preserves running animations).
+ * - No scripts at all:
+ *     → incremental DOM update for head + body (no flicker).
+ *
+ * While a srcdoc load is in progress, any further updates simply
+ * overwrite srcdoc again — the browser naturally aborts the previous
+ * load and only the last value takes effect.
  */
 function updatePreview(html: string) {
   const iframe = iframeRef.value
   if (!iframe) return
 
+  const newScriptContent = extractScriptContent(html)
+
+  // --- Script content changed (or first time with scripts) → refresh iframe ---
+  if (newScriptContent !== lastScriptContent && newScriptContent !== '') {
+    // Syntax-check first: broken JS would blank the whole preview.
+    // Only refresh when every <script> block parses without error.
+    try { new Function(newScriptContent) } catch { return }
+
+    iframe.srcdoc = html
+    lastScriptContent = newScriptContent
+    initialized = true
+    return
+  }
+
+  // --- Try incremental update (srcdoc may still be loading → catch handles it) ---
   try {
     const doc = iframe.contentDocument
-    if (!doc) throw new Error('No contentDocument access')
+    if (!doc || !doc.head || !doc.body) throw new Error('No contentDocument access')
 
     if (!initialized) {
-      // First render: write the full document to establish the initial state
+      // First render (no-script content)
       doc.open()
       doc.write(html)
       doc.close()
       initialized = true
+      lastScriptContent = newScriptContent
       return
     }
 
-    // Parse the new HTML into a virtual document
+    // Parse new HTML for incremental patching
     const parser = new DOMParser()
     const newDoc = parser.parseFromString(html, 'text/html')
 
-    // --- Update <head> (styles, meta tags, etc.) ---
+    // Always patch <head> (styles, meta)
     doc.head.innerHTML = newDoc.head.innerHTML
-    reactivateScripts(doc, doc.head)
 
-    // --- Update <body> ---
-    // 1. Extract scripts from the new body before setting innerHTML
-    //    (innerHTML doesn't execute scripts, so we handle them separately)
-    const newBody = newDoc.body
-    const scripts: Array<{
-      textContent: string
-      src: string
-      attrs: Array<{ name: string; value: string }>
-    }> = []
+    if (newScriptContent === '') {
+      // No scripts → safe to patch body too
+      doc.body.innerHTML = newDoc.body.innerHTML
+    }
+    // else: scripts exist but unchanged → don't touch body (preserve animations)
 
-    newBody.querySelectorAll('script').forEach(s => {
-      const attrs: Array<{ name: string; value: string }> = []
-      for (const attr of Array.from(s.attributes)) {
-        if (attr.name !== 'src') attrs.push({ name: attr.name, value: attr.value })
-      }
-      scripts.push({
-        textContent: s.textContent || '',
-        src: s.getAttribute('src') || '',
-        attrs,
-      })
-      s.remove()
-    })
-
-    // 2. Replace body HTML (script-free) — no navigation, no flicker
-    doc.body.innerHTML = newBody.innerHTML
-
-    // 3. Re-inject scripts as fresh elements so the browser executes them
-    scripts.forEach(({ textContent, src, attrs }) => {
-      const script = doc.createElement('script')
-      if (src) script.src = src
-      else script.textContent = textContent
-      attrs.forEach(({ name, value }) => script.setAttribute(name, value))
-      doc.body.appendChild(script)
-    })
+    lastScriptContent = newScriptContent
   } catch {
-    // Fallback: use srcdoc (will flicker, but at least works)
+    // contentDocument not accessible (srcdoc still loading, or cross-origin)
+    // → just (re-)set srcdoc; browser will display the latest value once ready
     iframe.srcdoc = html
-    initialized = false
+    lastScriptContent = newScriptContent
+    initialized = true
   }
 }
 
