@@ -1,6 +1,8 @@
 import { ref, computed, watch, type Ref, type ComputedRef } from 'vue'
 import { highlightCode, insertCursorInHighlightedHTML } from '../utils/highlight'
 
+export type PreviewMode = 'realtime' | 'final'
+
 const _scriptOpen = '<' + 'script'
 const _scriptClose = '</' + 'script>'
 const _styleOpen = '<' + 'style'
@@ -39,12 +41,14 @@ function isCodeSafeForPreview(html: string): boolean {
 
 export function useCodePreview(options: {
   code: Ref<string>
+  targetCode: Ref<string>
   cursorPositionInCode: ComputedRef<number>
 }) {
-  const { code, cursorPositionInCode } = options
+  const { code, targetCode, cursorPositionInCode } = options
 
   const previewCode = ref('')
   const previewExpanded = ref(false)
+  const previewMode = ref<PreviewMode>('realtime')
 
   const highlightedCode = computed(() => {
     let html = highlightCode(code.value)
@@ -55,9 +59,30 @@ export function useCodePreview(options: {
     return html
   })
 
+  // Watch current code for realtime mode updates
   watch(code, (newCode) => {
-    if (isCodeSafeForPreview(newCode)) {
+    if (previewMode.value === 'realtime' && isCodeSafeForPreview(newCode)) {
       previewCode.value = newCode
+    }
+  })
+
+  // Watch targetCode for final mode — when target changes, update immediately
+  watch(targetCode, (newTarget) => {
+    if (previewMode.value === 'final' && newTarget) {
+      previewCode.value = newTarget
+    }
+  })
+
+  // When switching modes, update the preview content accordingly
+  watch(previewMode, (mode) => {
+    if (mode === 'final') {
+      // Switch to final mode: show complete code if available, else current
+      previewCode.value = targetCode.value || code.value
+    } else {
+      // Switch to realtime mode: show current code state
+      if (isCodeSafeForPreview(code.value)) {
+        previewCode.value = code.value
+      }
     }
   })
 
@@ -65,10 +90,16 @@ export function useCodePreview(options: {
     previewExpanded.value = !previewExpanded.value
   }
 
+  function togglePreviewMode() {
+    previewMode.value = previewMode.value === 'realtime' ? 'final' : 'realtime'
+  }
+
   return {
     previewCode,
     previewExpanded,
+    previewMode,
     highlightedCode,
     togglePreview,
+    togglePreviewMode,
   }
 }

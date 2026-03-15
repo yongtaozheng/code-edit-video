@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
+import type { PreviewMode } from '../../composables/useCodePreview'
 
 const props = defineProps<{
   previewCode: string
@@ -7,11 +8,13 @@ const props = defineProps<{
   previewWidth: number
   previewHeight: number
   isResizing: boolean
+  previewMode: PreviewMode
 }>()
 
 const emit = defineEmits<{
   togglePreview: []
   resizeStart: [e: MouseEvent]
+  togglePreviewMode: []
 }>()
 
 const iframeRef = ref<HTMLIFrameElement | null>(null)
@@ -143,8 +146,8 @@ watch(
         <line x1="9" y1="11" x2="11" y2="9" />
       </svg>
     </div>
-    <div class="preview-header" @click="emit('togglePreview')">
-      <div class="preview-header-left">
+    <div class="preview-header">
+      <div class="preview-header-left" @click="emit('togglePreview')">
         <svg class="preview-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
           <line x1="8" y1="21" x2="16" y2="21"/>
@@ -152,22 +155,48 @@ watch(
         </svg>
         <span>Preview</span>
       </div>
-      <button class="expand-btn" :title="previewExpanded ? 'Collapse' : 'Expand'">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-          <template v-if="!previewExpanded">
-            <polyline points="15 3 21 3 21 9" />
-            <polyline points="9 21 3 21 3 15" />
-            <line x1="21" y1="3" x2="14" y2="10" />
-            <line x1="3" y1="21" x2="10" y2="14" />
-          </template>
-          <template v-else>
-            <polyline points="4 14 10 14 10 20" />
-            <polyline points="20 10 14 10 14 4" />
-            <line x1="14" y1="10" x2="21" y2="3" />
-            <line x1="3" y1="21" x2="10" y2="14" />
-          </template>
-        </svg>
-      </button>
+      <div class="preview-header-right">
+        <div class="preview-mode-toggle" @click.stop>
+          <button
+            class="preview-mode-btn"
+            :class="{ active: previewMode === 'realtime' }"
+            @click="previewMode !== 'realtime' && emit('togglePreviewMode')"
+            title="实时跟随代码更新"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+            </svg>
+            <span>实时</span>
+          </button>
+          <button
+            class="preview-mode-btn"
+            :class="{ active: previewMode === 'final' }"
+            @click="previewMode !== 'final' && emit('togglePreviewMode')"
+            title="始终显示完整代码效果"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            <span>完整</span>
+          </button>
+        </div>
+        <button class="expand-btn" :title="previewExpanded ? 'Collapse' : 'Expand'" @click.stop="emit('togglePreview')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <template v-if="!previewExpanded">
+              <polyline points="15 3 21 3 21 9" />
+              <polyline points="9 21 3 21 3 15" />
+              <line x1="21" y1="3" x2="14" y2="10" />
+              <line x1="3" y1="21" x2="10" y2="14" />
+            </template>
+            <template v-else>
+              <polyline points="4 14 10 14 10 20" />
+              <polyline points="20 10 14 10 14 4" />
+              <line x1="14" y1="10" x2="21" y2="3" />
+              <line x1="3" y1="21" x2="10" y2="14" />
+            </template>
+          </svg>
+        </button>
+      </div>
     </div>
     <div class="preview-body">
       <iframe
@@ -244,13 +273,8 @@ watch(
   padding: 10px 14px;
   background: var(--editor-surface);
   border-bottom: 1px solid var(--editor-border);
-  cursor: pointer;
   user-select: none;
   flex-shrink: 0;
-}
-
-.preview-header:hover {
-  background: var(--editor-bg);
 }
 
 .preview-header-left {
@@ -261,11 +285,61 @@ watch(
   font-weight: 600;
   color: #a6e3a1;
   font-family: system-ui, sans-serif;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.preview-header-left:hover {
+  background: rgba(205, 214, 244, 0.08);
+}
+
+.preview-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .preview-icon {
   width: 16px;
   height: 16px;
+  color: #a6e3a1;
+}
+
+.preview-mode-toggle {
+  display: flex;
+  align-items: center;
+  background: rgba(205, 214, 244, 0.06);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.preview-mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--editor-muted);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: system-ui, sans-serif;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.preview-mode-btn:hover:not(.active) {
+  color: var(--editor-text);
+  background: rgba(205, 214, 244, 0.08);
+}
+
+.preview-mode-btn.active {
+  background: rgba(166, 227, 161, 0.15);
   color: #a6e3a1;
 }
 

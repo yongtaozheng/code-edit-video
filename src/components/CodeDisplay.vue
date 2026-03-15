@@ -56,6 +56,7 @@ scrollToCursorFn = editorScroll.scrollToCursor
 
 const preview = useCodePreview({
   code,
+  targetCode: typingEngine.targetCode,
   cursorPositionInCode: typingEngine.cursorPositionInCode,
 })
 
@@ -275,7 +276,9 @@ onUnmounted(() => {
       :preview-width="resize.previewWidth.value"
       :preview-height="resize.previewHeight.value"
       :is-resizing="resize.isResizing.value"
+      :preview-mode="preview.previewMode.value"
       @toggle-preview="preview.togglePreview"
+      @toggle-preview-mode="preview.togglePreviewMode"
       @resize-start="resize.onResizeStart"
     />
 
