@@ -18,8 +18,16 @@ const emit = defineEmits<{
 }>()
 
 const iframeRef = ref<HTMLIFrameElement | null>(null)
+const iframeLoading = ref(false)
 let initialized = false
 let lastScriptContent = ''
+let lastHtml = ''
+
+// Throttle state for full srcdoc reloads (expensive operation)
+const SRCDOC_THROTTLE_MS = 500
+let lastSrcdocTime = 0
+let pendingSrcdocHtml: string | null = null
+let srcdocTimer: ReturnType<typeof setTimeout> | null = null
 
 const _sOpen = '<' + 'script'
 const _sClose = '</' + 'script>'
@@ -40,24 +48,134 @@ function extractScriptContent(html: string): string {
 }
 
 /**
- * Preview update strategy:
+ * Normalize script content by stripping whitespace and comments so that
+ * cosmetic-only edits (new blank lines, comment changes) do not trigger
+ * a full iframe reload.
+ */
+function normalizeScript(raw: string): string {
+  return raw
+    // strip single-line comments
+    .replace(/\/\/[^\n]*/g, '')
+    // strip multi-line comments
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    // collapse all whitespace
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * Detect whether a script change would produce visible DOM changes.
+ *
+ * Conservative strategy: DEFAULT to "yes, it's visual" (trigger reload).
+ * Only skip when we are VERY confident the change has no visual impact:
+ *   - Whitespace / comment-only changes (caught by normalizeScript)
+ *   - Pure variable declarations with no function calls or property writes
+ *     e.g.  let x = 5;  const arr = [1,2,3];  var name = 'hello';
+ *
+ * Everything else (function calls, property assignments, canvas API,
+ * requestAnimationFrame, etc.) triggers a reload — the throttle + fade
+ * keeps the experience smooth.
+ */
+function isVisuallyMeaningfulChange(oldScript: string, newScript: string): boolean {
+  const oldNorm = normalizeScript(oldScript)
+  const newNorm = normalizeScript(newScript)
+
+  // Whitespace / comment-only change → definitely no visual impact
+  if (oldNorm === newNorm) return false
+
+  // Code was appended (the common case during typing)
+  if (newNorm.startsWith(oldNorm)) {
+    const added = newNorm.slice(oldNorm.length).trim()
+    if (!added) return false
+
+    // Skip reload ONLY if the added code has:
+    //  1. No function calls or grouping  → no ()
+    //  2. No property writes             → no .identifier =
+    // This covers: let x = 5; const arr = [1,2]; var s = 'hi';
+    // But NOT:     el.innerHTML = 'x';  foo();  ctx.fillRect(...)
+    const hasCalls = /[()]/.test(added)
+    const hasPropWrite = /\.\w+\s*=/.test(added)
+    if (!hasCalls && !hasPropWrite) return false
+  }
+
+  // Default: assume the change is visual → reload
+  return true
+}
+
+/**
+ * Actually perform the srcdoc swap with a fade transition.
+ */
+function doSrcdocReload(iframe: HTMLIFrameElement, html: string) {
+  iframeLoading.value = true
+
+  const onLoad = () => {
+    iframe.removeEventListener('load', onLoad)
+    // Small delay to let the browser paint the new content before fading in
+    requestAnimationFrame(() => {
+      iframeLoading.value = false
+    })
+  }
+  iframe.addEventListener('load', onLoad)
+
+  iframe.srcdoc = html
+  lastSrcdocTime = Date.now()
+}
+
+/**
+ * Throttled srcdoc reload: limits full iframe refreshes to at most once
+ * per SRCDOC_THROTTLE_MS. If a reload is requested during cooldown, the
+ * latest HTML is queued and applied when the cooldown expires.
+ *
+ * This keeps incremental DOM patches (CSS, no-script body) fully real-time
+ * while only rate-limiting the expensive full-page reloads.
+ */
+function smoothSrcdocReload(iframe: HTMLIFrameElement, html: string) {
+  const now = Date.now()
+  const elapsed = now - lastSrcdocTime
+
+  if (elapsed >= SRCDOC_THROTTLE_MS) {
+    // Cooldown has passed → reload immediately
+    if (srcdocTimer) { clearTimeout(srcdocTimer); srcdocTimer = null }
+    pendingSrcdocHtml = null
+    doSrcdocReload(iframe, html)
+  } else {
+    // Still in cooldown → queue the latest HTML
+    pendingSrcdocHtml = html
+    if (!srcdocTimer) {
+      srcdocTimer = setTimeout(() => {
+        srcdocTimer = null
+        if (pendingSrcdocHtml && iframeRef.value) {
+          const pending = pendingSrcdocHtml
+          pendingSrcdocHtml = null
+          doSrcdocReload(iframeRef.value, pending)
+        }
+      }, SRCDOC_THROTTLE_MS - elapsed)
+    }
+  }
+}
+
+/**
+ * Preview update strategy (optimized to reduce flicker):
  *
  * - First render (no scripts): doc.open/write/close.
- * - First render (has scripts) OR script content changed:
- *     → iframe.srcdoc = html  (full page refresh, most reliable for
- *       canvas/rAF/animation scripts — the browser handles execution).
+ * - First render (has scripts) OR script content changed in a
+ *   visually meaningful way:
+ *     → smooth srcdoc reload with fade transition.
+ * - Script changed but only non-visual edits (variable declarations,
+ *   comments, etc.):
+ *     → defer full reload; update head only.
  * - Scripts exist but unchanged (CSS-only edit):
  *     → update <head> only (preserves running animations).
  * - No scripts at all:
  *     → incremental DOM update for head + body (no flicker).
- *
- * While a srcdoc load is in progress, any further updates simply
- * overwrite srcdoc again — the browser naturally aborts the previous
- * load and only the last value takes effect.
  */
 function updatePreview(html: string) {
   const iframe = iframeRef.value
   if (!iframe) return
+
+  // Skip if the HTML is exactly the same (can happen with debounce)
+  if (html === lastHtml && initialized) return
+  lastHtml = html
 
   const newScriptContent = extractScriptContent(html)
 
@@ -67,10 +185,17 @@ function updatePreview(html: string) {
     // Only refresh when every <script> block parses without error.
     try { new Function(newScriptContent) } catch { return }
 
-    iframe.srcdoc = html
+    // Check if the change is visually meaningful
+    if (!initialized || isVisuallyMeaningfulChange(lastScriptContent, newScriptContent)) {
+      smoothSrcdocReload(iframe, html)
+      lastScriptContent = newScriptContent
+      initialized = true
+      return
+    }
+
+    // Non-visual script change: update stored script but only patch head (CSS)
     lastScriptContent = newScriptContent
-    initialized = true
-    return
+    // Fall through to incremental update for CSS changes
   }
 
   // --- Try incremental update (srcdoc may still be loading → catch handles it) ---
@@ -104,8 +229,8 @@ function updatePreview(html: string) {
     lastScriptContent = newScriptContent
   } catch {
     // contentDocument not accessible (srcdoc still loading, or cross-origin)
-    // → just (re-)set srcdoc; browser will display the latest value once ready
-    iframe.srcdoc = html
+    // → smooth reload instead of abrupt srcdoc swap
+    smoothSrcdocReload(iframe, html)
     lastScriptContent = newScriptContent
     initialized = true
   }
@@ -203,6 +328,7 @@ watch(
         ref="iframeRef"
         sandbox="allow-scripts allow-modals allow-same-origin"
         class="preview-iframe"
+        :class="{ 'iframe-loading': iframeLoading }"
         title="HTML Preview"
       />
     </div>
@@ -371,6 +497,11 @@ watch(
   height: 100%;
   border: none;
   background: #fff;
+  transition: opacity 0.15s ease;
+}
+
+.preview-iframe.iframe-loading {
+  opacity: 0.6;
 }
 
 @media (max-width: 768px) {
