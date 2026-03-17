@@ -55,15 +55,26 @@ jobs:
             libxcb-xfixes0-dev \
             nasm
 
-      # Windows: 安装 nasm（openh264 编译需要）
+      # Windows: 安装 NASM（openh264 编译需要）
       - name: Install NASM (Windows)
         if: matrix.platform == 'windows-latest'
         uses: ilammy/setup-nasm@v1
 
+      # Windows: 设置 MSVC 开发环境
+      - name: Setup MSVC dev environment (Windows)
+        if: matrix.platform == 'windows-latest'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # Windows: 设置 libclang 路径（bindgen 需要）
+      - name: Set LIBCLANG_PATH (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: echo "LIBCLANG_PATH=$env:PROGRAMFILES\LLVM\lib" >> $env:GITHUB_ENV
+        shell: pwsh
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install Rust stable
