@@ -17,6 +17,7 @@ export function useTypingEngine(options: {
   const isPaused = ref(false)
   const typingTimer = ref<ReturnType<typeof setTimeout> | null>(null)
   const typingComplete = ref(false)
+  const typingError = ref('')
 
   const typingMode = ref<TypingMode>('auto')
   const speedPreset = ref<SpeedPreset>('fast')
@@ -428,7 +429,19 @@ export function useTypingEngine(options: {
   function startTyping(pasteCode: string) {
     if (!pasteCode.trim()) return
 
-    const { framework, slots, hasSlots } = parseFrameworkCode(pasteCode)
+    // Clear any previous error
+    typingError.value = ''
+
+    let parsed: ReturnType<typeof parseFrameworkCode>
+    try {
+      parsed = parseFrameworkCode(pasteCode)
+    } catch (e) {
+      console.error('[useTypingEngine] parseFrameworkCode failed:', e)
+      typingError.value = '代码解析失败：插槽标记格式有误，请检查 [slot] / [/slot] 标记是否正确'
+      return
+    }
+
+    const { framework, slots, hasSlots } = parsed
 
     if (hasSlots) {
       isFrameworkMode.value = true
@@ -443,7 +456,13 @@ export function useTypingEngine(options: {
       lineActions.value = []
       currentIndex.value = 0
 
-      code.value = buildCodeFromSlots()
+      try {
+        code.value = buildCodeFromSlots()
+      } catch (e) {
+        console.error('[useTypingEngine] buildCodeFromSlots failed:', e)
+        typingError.value = '代码构建失败：插槽内容拼接出错，请检查代码格式'
+        return
+      }
 
       isTyping.value = true
       isPaused.value = false
@@ -458,10 +477,18 @@ export function useTypingEngine(options: {
       frameworkSlots.value = []
       slotExecOrder.value = []
 
-      const { cleanCode, actions } = parseAndCleanCode(pasteCode)
+      let cleanResult: ReturnType<typeof parseAndCleanCode>
+      try {
+        cleanResult = parseAndCleanCode(pasteCode)
+      } catch (e) {
+        console.error('[useTypingEngine] parseAndCleanCode failed:', e)
+        typingError.value = '代码解析失败：行标记格式有误，请检查 [pause] / [quick] / [ignore] 标记'
+        return
+      }
+
       rawTargetCode.value = pasteCode
-      targetCode.value = cleanCode
-      lineActions.value = actions
+      targetCode.value = cleanResult.cleanCode
+      lineActions.value = cleanResult.actions
       currentIndex.value = 0
       code.value = ''
       isTyping.value = true
@@ -600,6 +627,7 @@ export function useTypingEngine(options: {
     isTyping,
     isPaused,
     typingComplete,
+    typingError,
     typingMode,
     speedPreset,
     typingSpeed,

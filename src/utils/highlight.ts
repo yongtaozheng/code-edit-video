@@ -22,7 +22,8 @@ export function initHighlighter(): void {
 export function highlightCode(code: string): string {
   try {
     return hljs.highlight(code, { language: 'xml' }).value
-  } catch {
+  } catch (e) {
+    console.warn('[highlightCode] Syntax highlighting failed, falling back to raw code:', e)
     return code
   }
 }
@@ -40,12 +41,19 @@ export function insertCursorInHighlightedHTML(html: string, charPos: number): st
       while (i < html.length && html[i] !== '>') i++
       i++
     } else if (html[i] === '&') {
-      const semiIdx = html.indexOf(';', i)
-      if (semiIdx !== -1 && semiIdx - i < 10) {
-        i = semiIdx + 1
-      } else {
-        i++
+      // Bounded lookahead (max 10 chars) to find the closing ';' of an HTML
+      // entity.  The previous indexOf(';', i) scanned to end-of-string on
+      // every '&', causing O(n²) in the worst case.
+      let found = false
+      const limit = Math.min(i + 10, html.length)
+      for (let j = i + 1; j < limit; j++) {
+        if (html[j] === ';') {
+          i = j + 1
+          found = true
+          break
+        }
       }
+      if (!found) i++
       textCount++
     } else {
       i++

@@ -82,11 +82,19 @@ const keyboard = useKeyboardHandler({
   togglePause: typingEngine.togglePause,
 })
 
-// ==================== Recording Error Auto-dismiss ====================
+// ==================== Error Auto-dismiss ====================
 watch(recording.recordingError, (val) => {
   if (val) {
     setTimeout(() => {
       recording.recordingError.value = ''
+    }, 6000)
+  }
+})
+
+watch(typingEngine.typingError, (val) => {
+  if (val) {
+    setTimeout(() => {
+      typingEngine.typingError.value = ''
     }, 6000)
   }
 })
@@ -202,6 +210,24 @@ onUnmounted(() => {
         </svg>
         <span>{{ recording.recordingError.value }}</span>
         <button class="toast-close" @click="recording.recordingError.value = ''">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+    </Transition>
+
+    <!-- Typing Error Toast -->
+    <Transition name="toast">
+      <div v-if="typingEngine.typingError.value" class="typing-error-toast">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+          <circle cx="12" cy="12" r="10" />
+          <line x1="12" y1="8" x2="12" y2="12" />
+          <line x1="12" y1="16" x2="12.01" y2="16" />
+        </svg>
+        <span>{{ typingEngine.typingError.value }}</span>
+        <button class="toast-close" @click="typingEngine.typingError.value = ''">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
             <line x1="18" y1="6" x2="6" y2="18" />
             <line x1="6" y1="6" x2="18" y2="18" />
@@ -708,6 +734,34 @@ onUnmounted(() => {
 }
 
 .recording-error-toast svg {
+  flex-shrink: 0;
+}
+
+/* Typing Error Toast */
+.typing-error-toast {
+  position: absolute;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  background: rgba(250, 179, 135, 0.15);
+  border: 1px solid rgba(250, 179, 135, 0.4);
+  border-radius: 10px;
+  color: #fab387;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: system-ui, sans-serif;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  max-width: 90%;
+  white-space: nowrap;
+}
+
+.typing-error-toast svg {
   flex-shrink: 0;
 }
 
