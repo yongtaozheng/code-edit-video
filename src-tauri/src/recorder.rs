@@ -8,6 +8,21 @@ use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use xcap::Window;
 
+/// Wrapper to make `xcap::Window` Send-safe.
+///
+/// On Windows, `xcap::Window` contains an `HWND` (`*mut c_void`) which is
+/// not `Send`. However, we only ever use the window from a single blocking
+/// thread after moving it there, so this is safe.
+struct SendableWindow(Window);
+unsafe impl Send for SendableWindow {}
+
+impl std::ops::Deref for SendableWindow {
+    type Target = Window;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// Global flag: is a recording currently in progress?
 static RECORDING_ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -71,10 +86,13 @@ pub async fn start_recording(
     // Notify frontend that recording has started
     let _ = on_progress.send(RecordingEvent::Started);
 
+    // Wrap xcap::Window in a Send-safe wrapper for the blocking thread
+    let sendable_window = SendableWindow(xcap_window);
+
     // Spawn the capture loop on a blocking thread (does CPU-intensive work)
     let recording_start = Instant::now();
     tokio::task::spawn_blocking(move || {
-        let result = capture_loop(xcap_window, &mut encoder, fps, stop_rx, &on_progress);
+        let result = capture_loop(&sendable_window, &mut encoder, fps, stop_rx, &on_progress);
         let actual_duration = recording_start.elapsed().as_secs_f64();
 
         match result {
@@ -156,7 +174,7 @@ pub async fn stop_recording() -> Result<String, Box<dyn std::error::Error + Send
 /// so we always encode — this ensures frame_count == elapsed_time × fps,
 /// which is required for minimp4's fixed-fps muxing.
 fn capture_loop(
-    window: Window,
+    window: &SendableWindow,
     encoder: &mut Mp4Encoder,
     fps: u32,
     mut stop_rx: tokio::sync::oneshot::Receiver<()>,
