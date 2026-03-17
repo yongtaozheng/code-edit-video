@@ -1,0 +1,43 @@
+[package]
+name = "code-edit-video"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "code_edit_video_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Screen capture (0.4.x has confirmed stable API)
+xcap = "0.4"
+
+# H.264 encoding (downloads & compiles OpenH264 from source, no system deps)
+openh264 = { version = "0.6", features = ["source"] }
+
+# MP4 muxing (pure C minimp4 binding)
+minimp4 = "0.1"
+
+# Image processing
+image = "0.25"
+
+# Async runtime
+tokio = { version = "1", features = ["sync", "time"] }
+
+# Date/time for filenames
+chrono = "0.4"
+
+# Logging
+log = "0.4"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

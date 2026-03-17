@@ -5,7 +5,7 @@ import { initHighlighter } from '../utils/highlight'
 
 // Composables
 import { useTypingEngine } from '../composables/useTypingEngine'
-import { useScreenRecording } from '../composables/useScreenRecording'
+import { useRecording } from '../composables/useRecording'
 import { useCodePreview } from '../composables/useCodePreview'
 import { usePreviewResize } from '../composables/usePreviewResize'
 import { useContentSplit } from '../composables/useContentSplit'
@@ -31,7 +31,7 @@ const pasteCode = ref('')
 
 // ==================== Composable Initialization ====================
 
-const recording = useScreenRecording()
+const recording = useRecording()
 
 // Late-bind scrollToCursor to break circular dependency
 let scrollToCursorFn: () => void = () => {}
@@ -164,6 +164,7 @@ onUnmounted(() => {
           <span v-if="recording.isRecording.value" class="record-btn-time">{{ recording.recordingDuration.value }}</span>
           <span>{{ recording.isRecording.value ? '停止录屏' : '录屏' }}</span>
           <span v-if="recording.isRecording.value && recording.recordingMode.value === 'canvas'" class="record-mode-badge">画布</span>
+          <span v-if="recording.isRecording.value && recording.recordingMode.value === 'desktop'" class="record-mode-badge desktop">桌面</span>
         </button>
 
         <button class="split-btn" @click="contentSplit.openSplitModal" :disabled="!code.trim()" title="将代码拆分为 HTML / CSS / JS 三部分">
