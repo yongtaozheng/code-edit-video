@@ -145,7 +145,7 @@ jobs:
           path: artifacts
 
       - name: List all downloaded artifacts
-        run: find artifacts -type f
+        run: find artifacts -type f || echo "No artifacts found"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
