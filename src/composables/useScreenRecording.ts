@@ -346,7 +346,7 @@ export function useScreenRecording() {
           lastCaptureTime = now
 
           try {
-            await renderFrameToCanvas(target, toCanvas, scale)
+            await renderFrameToCanvas(target!, toCanvas, scale)
 
             // Signal new frame to captureStream
             const track = stream.getVideoTracks()[0]
