@@ -36,6 +36,7 @@
 - 手动录制 — 随时开始/停止录制
 - 自动录制 — 输入开始时自动启动录制，输入完成后自动停止
 - 录制完成后可直接下载视频文件
+- **桌面端增强** — 原生窗口截图 + H.264 编码，直接输出 MP4，无权限弹窗
 
 ### 实时预览
 
@@ -62,6 +63,8 @@
 - [TypeScript](https://www.typescriptlang.org/)
 - [Vite](https://vite.dev/)
 - [highlight.js](https://highlightjs.org/) — 语法高亮
+- [Tauri v2](https://v2.tauri.app/) — 桌面端框架（可选）
+- [OpenH264](https://github.com/cisco/openh264) + [minimp4](https://github.com/nickleus27/minimp4.rs) — 桌面端 H.264 编码 & MP4 封装
 
 ## 快速开始
 
@@ -99,6 +102,93 @@ npm run build
 npm run preview
 ```
 
+## 桌面客户端
+
+桌面端基于 Tauri v2，提供原生窗口录屏能力：直接截取应用窗口 → H.264 编码 → 输出 MP4，无需浏览器权限弹窗。
+
+### Web 录屏 vs 桌面端录屏
+
+| | Web 版 | 桌面端 |
+|---|---|---|
+| 输出格式 | WebM | **MP4 (H.264)** |
+| 权限弹窗 | 每次录制都需要 | **无需任何权限** |
+| HTTPS 要求 | Display 模式必须 | **不需要** |
+| 录制范围 | 整个屏幕/标签页 | **精确到应用窗口** |
+
+### 环境要求
+
+除 [Web 版要求](#环境要求) 外，还需要：
+
+- [Rust](https://www.rust-lang.org/tools/install) (stable)
+- 系统 C 编译器（OpenH264 从源码编译需要）
+
+**macOS：**
+
+```bash
+# 安装 Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Xcode Command Line Tools（提供 C 编译器）
+xcode-select --install
+
+# 可选：安装 nasm 加速 OpenH264 编码（快 2-3x）
+brew install nasm
+```
+
+**Windows：**
+
+```bash
+# 安装 Rust (MSVC 版)
+winget install Rustlang.Rust.MSVC
+
+# 安装 C++ 构建工具
+winget install Microsoft.VisualStudio.2022.BuildTools
+# 安装时勾选「使用 C++ 的桌面开发」工作负载
+
+# 可选：安装 nasm 加速 OpenH264 编码
+winget install NASM.NASM
+```
+
+**Linux (Debian/Ubuntu)：**
+
+```bash
+# 安装 Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# 安装系统依赖
+sudo apt install build-essential libwebkit2gtk-4.1-dev libssl-dev \
+  libayatana-appindicator3-dev librsvg2-dev
+
+# 可选：安装 nasm
+sudo apt install nasm
+```
+
+### 开发运行
+
+```bash
+# 安装依赖（首次）
+npm install
+
+# 启动桌面端开发模式（自动启动 Vite + Cargo）
+npm run tauri:dev
+```
+
+首次运行会编译所有 Rust 依赖（~500 个 crate），大约需要 2-5 分钟，后续增量编译仅需几秒。
+
+### 构建安装包
+
+```bash
+npm run tauri:build
+```
+
+构建产物位于 `src-tauri/target/release/bundle/`：
+
+| 平台 | 产物 |
+|------|------|
+| macOS | `.dmg` / `.app` |
+| Windows | `.msi` / `.exe` |
+| Linux | `.deb` / `.AppImage` |
+
 ## 使用指南
 
 1. **粘贴代码** — 点击「粘贴代码」按钮，将需要模拟输入的代码粘贴到弹窗中
@@ -112,15 +202,28 @@ npm run preview
 
 ```
 code-edit-video/
-├── src/
+├── src/                           # 前端 (Vue 3 + TypeScript)
 │   ├── components/
-│   │   └── CodeDisplay.vue    # 核心组件：编辑器 + 输入引擎 + 预览
-│   ├── assets/                # 静态资源
-│   ├── App.vue                # 根组件
-│   ├── main.ts                # 应用入口
-│   └── style.css              # 全局样式
-├── public/                    # 公共静态资源
-├── index.html                 # HTML 模板
+│   │   ├── CodeDisplay.vue        #   核心组件：编辑器 + 输入引擎 + 预览
+│   │   └── CodeDisplay/           #   子组件（控制栏、弹窗等）
+│   ├── composables/
+│   │   ├── useRecording.ts        #   录屏门面：自动选择 Web/桌面方案
+│   │   ├── useScreenRecording.ts  #   Web 录屏（getDisplayMedia / Canvas）
+│   │   ├── useDesktopRecording.ts #   桌面录屏（Tauri IPC → Rust 后端）
+│   │   ├── useTypingEngine.ts     #   打字模拟引擎
+│   │   └── ...                    #   其他组合式函数
+│   ├── App.vue
+│   ├── main.ts
+│   └── style.css
+├── src-tauri/                     # 桌面端 Rust 后端 (Tauri v2)
+│   ├── src/
+│   │   ├── lib.rs                 #   Tauri Builder + IPC 命令定义
+│   │   ├── recorder.rs            #   帧捕获循环（xcap 窗口截图）
+│   │   ├── encoder.rs             #   H.264 编码 + MP4 封装
+│   │   └── main.rs                #   桌面入口
+│   ├── Cargo.toml
+│   └── tauri.conf.json
+├── index.html
 ├── package.json
 ├── vite.config.ts
 └── tsconfig.json
