@@ -59,31 +59,31 @@ export function useCodePreview(options: {
     return html
   })
 
-  // Watch current code for realtime mode updates
-  watch(code, (newCode) => {
-    if (previewMode.value === 'realtime' && isCodeSafeForPreview(newCode)) {
-      previewCode.value = newCode
-    }
-  })
+  function resolvePreviewSource(): string {
+    return previewMode.value === 'final'
+      ? (targetCode.value || code.value)
+      : code.value
+  }
 
-  // Watch targetCode for final mode — when target changes, update immediately
-  watch(targetCode, (newTarget) => {
-    if (previewMode.value === 'final' && newTarget) {
-      previewCode.value = newTarget
+  // Refresh preview ONLY on explicit user actions (e.g. Ctrl/Cmd+S).
+  function refreshPreview(): boolean {
+    const next = resolvePreviewSource()
+    if (!next) {
+      previewCode.value = ''
+      return true
     }
-  })
+
+    if (previewMode.value === 'realtime' && !isCodeSafeForPreview(next)) {
+      return false
+    }
+
+    previewCode.value = next
+    return true
+  }
 
   // When switching modes, update the preview content accordingly
-  watch(previewMode, (mode) => {
-    if (mode === 'final') {
-      // Switch to final mode: show complete code if available, else current
-      previewCode.value = targetCode.value || code.value
-    } else {
-      // Switch to realtime mode: show current code state
-      if (isCodeSafeForPreview(code.value)) {
-        previewCode.value = code.value
-      }
-    }
+  watch(previewMode, () => {
+    refreshPreview()
   })
 
   function togglePreview() {
@@ -99,6 +99,7 @@ export function useCodePreview(options: {
     previewExpanded,
     previewMode,
     highlightedCode,
+    refreshPreview,
     togglePreview,
     togglePreviewMode,
   }

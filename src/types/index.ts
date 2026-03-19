@@ -2,7 +2,7 @@ export type TypingMode = 'auto' | 'manual'
 export type SpeedPreset = 'slow' | 'medium' | 'fast'
 
 export interface LineAction {
-  type: 'pause' | 'quick' | 'ignore'
+  type: 'pause' | 'quick' | 'ignore' | 'save'
   lineStart: number
   lineEnd: number
   cleanLine: string

@@ -10,7 +10,7 @@ const pasteTextareaPlaceholder = [
   '  <!--[pause]-->  在此行暂停，等待手动继续',
   '  /*[pause]*/    CSS 注释风格',
   '  //[pause]      JS 注释风格',
-  '  同理支持 [quick]（瞬间输入）和 [ignore]（跳过）',
+  '  同理支持 [quick]（瞬间输入）、[save]（主动保存）和 [ignore]（跳过）',
   '',
   '框架模式 — 先展示骨架，再逐段输入：',
   '  <!--[slot]-->          默认顺序',
@@ -95,6 +95,8 @@ watch(() => props.show, (visible) => {
               <span class="action-desc">暂停输入</span>
               <span class="action-tag tag-quick">&lt;!--[quick]--&gt;</span>
               <span class="action-desc">瞬间输入整行</span>
+              <span class="action-tag tag-save">&lt;!--[save]--&gt;</span>
+              <span class="action-desc">该行输入完后主动保存</span>
               <span class="action-tag tag-ignore">&lt;!--[ignore]--&gt;</span>
               <span class="action-desc">跳过此行</span>
             </div>
@@ -280,6 +282,7 @@ watch(() => props.show, (visible) => {
 
 .tag-pause { background: rgba(249, 226, 175, 0.1); color: #f9e2af; }
 .tag-quick { background: rgba(166, 227, 161, 0.1); color: #a6e3a1; }
+.tag-save { background: rgba(250, 179, 135, 0.12); color: #fab387; }
 .tag-ignore { background: rgba(108, 112, 134, 0.15); color: #6c7086; }
 .tag-slot { background: rgba(137, 180, 250, 0.1); color: #89b4fa; }
 .tag-slot-nopause { background: rgba(148, 226, 213, 0.1); color: #94e2d5; }

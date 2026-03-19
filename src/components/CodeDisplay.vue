@@ -28,6 +28,8 @@ initHighlighter()
 const code = ref('')
 const showPasteModal = ref(false)
 const pasteCode = ref('')
+const lastSavedCode = ref('')
+const isDocumentSaved = ref(true)
 
 // ==================== Composable Initialization ====================
 
@@ -40,6 +42,7 @@ const typingEngine = useTypingEngine({
   code,
   onTypingComplete: () => recording.autoStopRecordingIfNeeded(),
   scrollToCursor: () => scrollToCursorFn(),
+  onSaveRequested: () => handleSavePreview(),
 })
 
 const editorScroll = useEditorScroll({
@@ -80,6 +83,11 @@ const keyboard = useKeyboardHandler({
   closePasteModal: () => closePasteModal(),
   typeManualChunk: typingEngine.typeManualChunk,
   togglePause: typingEngine.togglePause,
+  requestSavePreview: handleSavePreview,
+})
+
+watch(code, (newCode) => {
+  isDocumentSaved.value = newCode === lastSavedCode.value
 })
 
 // ==================== Error Auto-dismiss ====================
@@ -122,6 +130,13 @@ async function handleStartTyping() {
   showPasteModal.value = false
 }
 
+function handleSavePreview() {
+  const ok = preview.refreshPreview()
+  if (!ok) return
+  lastSavedCode.value = code.value
+  isDocumentSaved.value = true
+}
+
 // ==================== Canvas Recording Target ====================
 const containerRef = ref<HTMLElement | null>(null)
 
@@ -129,6 +144,9 @@ const containerRef = ref<HTMLElement | null>(null)
 onMounted(() => {
   // Set the capture target for canvas-based recording (HTTP fallback)
   recording.captureTargetRef.value = containerRef.value
+  preview.refreshPreview()
+  lastSavedCode.value = code.value
+  isDocumentSaved.value = true
   editorScroll.textareaRef.value?.focus()
   document.addEventListener('keydown', keyboard.handleGlobalKeydown)
 })
@@ -197,6 +215,10 @@ onUnmounted(() => {
         <ThemeSelector />
 
         <span class="lang-badge">HTML</span>
+        <span class="save-status" :class="{ unsaved: !isDocumentSaved }">
+          <span class="save-status-dot"></span>
+          {{ isDocumentSaved ? '已保存' : '未保存' }}
+        </span>
         <span class="line-count">{{ editorScroll.lineNumbers.value.length }} lines</span>
       </div>
     </header>
@@ -580,6 +602,32 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--editor-muted);
   font-family: system-ui, sans-serif;
+}
+
+.save-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #a6e3a1;
+  font-family: system-ui, sans-serif;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: rgba(166, 227, 161, 0.14);
+}
+
+.save-status.unsaved {
+  color: #f9e2af;
+  background: rgba(249, 226, 175, 0.16);
+}
+
+.save-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.95;
 }
 
 /* Editor */

@@ -10,6 +10,7 @@ export function useKeyboardHandler(options: {
   closePasteModal: () => void
   typeManualChunk: () => void
   togglePause: () => void
+  requestSavePreview?: () => void
 }) {
   function handleGlobalKeydown(e: KeyboardEvent) {
     // Escape closes modal
@@ -20,6 +21,13 @@ export function useKeyboardHandler(options: {
 
     // Don't intercept if modal is open
     if (options.showPasteModal.value) return
+
+    // Manual save shortcut: refresh preview
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault()
+      options.requestSavePreview?.()
+      return
+    }
 
     // Manual mode: any key types the next chunk
     if (options.isTyping.value && options.typingMode.value === 'manual' && !options.typingComplete.value) {

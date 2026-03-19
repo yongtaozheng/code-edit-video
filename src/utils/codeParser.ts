@@ -11,11 +11,11 @@ export function parseAndCleanCode(rawCode: string): { cleanCode: string; actions
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    const actionMatch = line.match(/(?:<!--\s*\[(pause|quick|ignore)\]\s*-->|\/\*\s*\[(pause|quick|ignore)\]\s*\*\/|(?:\/\/|#)\s*\[(pause|quick|ignore)\])\s*$/)
+    const actionMatch = line.match(/(?:<!--\s*\[(pause|quick|ignore|save)\]\s*-->|\/\*\s*\[(pause|quick|ignore|save)\]\s*\*\/|(?:\/\/|#)\s*\[(pause|quick|ignore|save)\])\s*$/)
 
     if (actionMatch) {
-      const actionType = (actionMatch[1] || actionMatch[2] || actionMatch[3]) as 'pause' | 'quick' | 'ignore'
-      const cleanLine = line.replace(/\s*(?:<!--\s*\[(pause|quick|ignore)\]\s*-->|\/\*\s*\[(pause|quick|ignore)\]\s*\*\/|(?:\/\/|#)\s*\[(pause|quick|ignore)\])\s*$/, '')
+      const actionType = (actionMatch[1] || actionMatch[2] || actionMatch[3]) as 'pause' | 'quick' | 'ignore' | 'save'
+      const cleanLine = line.replace(/\s*(?:<!--\s*\[(pause|quick|ignore|save)\]\s*-->|\/\*\s*\[(pause|quick|ignore|save)\]\s*\*\/|(?:\/\/|#)\s*\[(pause|quick|ignore|save)\])\s*$/, '')
 
       if (actionType === 'ignore') {
         continue

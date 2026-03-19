@@ -6,6 +6,7 @@ export function useTypingEngine(options: {
   code: Ref<string>
   onTypingComplete: () => void
   scrollToCursor: () => void
+  onSaveRequested?: () => void
 }) {
   const { code } = options
 
@@ -181,6 +182,23 @@ export function useTypingEngine(options: {
     return delay
   }
 
+  function triggerSaveIfNeeded() {
+    options.onSaveRequested?.()
+  }
+
+  function hasSaveActionAtLineEnd(index: number): boolean {
+    return lineActions.value.some((a) => a.type === 'save' && a.lineEnd === index)
+  }
+
+  function isCssSlot(actualSlotIdx: number): boolean {
+    const slot = frameworkSlots.value[actualSlotIdx]
+    if (!slot) return false
+    const before = frameworkBase.value.substring(0, slot.insertPosition).toLowerCase()
+    const openCount = (before.match(/<style\b[^>]*>/g) || []).length
+    const closeCount = (before.match(/<\/style>/g) || []).length
+    return openCount > closeCount
+  }
+
   function typeNextChar() {
     if (isFrameworkMode.value) {
       typeNextSlotChar()
@@ -211,6 +229,7 @@ export function useTypingEngine(options: {
       }
     }
 
+    const typedIndex = currentIndex.value
     const char = targetCode.value[currentIndex.value]
     code.value += char
     currentIndex.value++
@@ -231,6 +250,10 @@ export function useTypingEngine(options: {
     }
 
     const nextChar = targetCode.value[currentIndex.value] || ''
+
+    if (hasSaveActionAtLineEnd(typedIndex)) {
+      triggerSaveIfNeeded()
+    }
 
     options.scrollToCursor()
 
@@ -262,12 +285,14 @@ export function useTypingEngine(options: {
         typingComplete.value = true
         code.value = buildCodeFromSlots()
         options.scrollToCursor()
+        triggerSaveIfNeeded()
         options.onTypingComplete()
         return
       }
 
       code.value = buildCodeFromSlots()
       options.scrollToCursor()
+      triggerSaveIfNeeded()
 
       if (justFinished.pauseAfter) {
         isPaused.value = true
@@ -295,6 +320,9 @@ export function useTypingEngine(options: {
 
     code.value = buildCodeFromSlots()
     options.scrollToCursor()
+    if (char === '}' && isCssSlot(actualSlotIdx)) {
+      triggerSaveIfNeeded()
+    }
 
     const delay = getRandomDelay(char, nextChar)
     typingTimer.value = setTimeout(typeNextSlotChar, delay)
@@ -336,6 +364,7 @@ export function useTypingEngine(options: {
         }
       }
 
+      const typedIndex = currentIndex.value
       const char = targetCode.value[currentIndex.value]
       code.value += char
       currentIndex.value++
@@ -353,6 +382,10 @@ export function useTypingEngine(options: {
         if (leadingSpaces) {
           code.value += leadingSpaces
         }
+      }
+
+      if (hasSaveActionAtLineEnd(typedIndex)) {
+        triggerSaveIfNeeded()
       }
     }
 
@@ -375,6 +408,7 @@ export function useTypingEngine(options: {
     }
 
     const charsToType = manualCharsPerKey.value
+    let shouldSaveAfterBuild = false
 
     for (let i = 0; i < charsToType; i++) {
       if (currentSlotIndex.value >= execOrder.length) {
@@ -395,10 +429,12 @@ export function useTypingEngine(options: {
         if (currentSlotIndex.value >= execOrder.length) {
           isTyping.value = false
           typingComplete.value = true
+          shouldSaveAfterBuild = true
           options.onTypingComplete()
           break
         }
 
+        shouldSaveAfterBuild = true
         if (justFinished.pauseAfter) {
           isPaused.value = true
           break
@@ -418,10 +454,17 @@ export function useTypingEngine(options: {
           currentSlotCharIndex.value++
         }
       }
+
+      if (char === '}' && isCssSlot(actualSlotIdx)) {
+        shouldSaveAfterBuild = true
+      }
     }
 
     code.value = buildCodeFromSlots()
     options.scrollToCursor()
+    if (shouldSaveAfterBuild) {
+      triggerSaveIfNeeded()
+    }
   }
 
   // ==================== Control Functions ====================
@@ -482,7 +525,7 @@ export function useTypingEngine(options: {
         cleanResult = parseAndCleanCode(pasteCode)
       } catch (e) {
         console.error('[useTypingEngine] parseAndCleanCode failed:', e)
-        typingError.value = '代码解析失败：行标记格式有误，请检查 [pause] / [quick] / [ignore] 标记'
+        typingError.value = '代码解析失败：行标记格式有误，请检查 [pause] / [quick] / [save] / [ignore] 标记'
         return
       }
 
