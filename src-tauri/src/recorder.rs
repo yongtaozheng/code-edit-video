@@ -235,29 +235,93 @@ fn capture_loop(
 fn find_app_window(
     app: &tauri::AppHandle,
 ) -> Result<Window, Box<dyn std::error::Error + Send + Sync>> {
-    // Get the Tauri window title
     let tauri_win = app
         .get_webview_window("main")
         .ok_or("Tauri main window not found")?;
-    let title = tauri_win.title().unwrap_or_default();
+    let tauri_title = tauri_win.title().unwrap_or_default();
+    let expected = normalize_window_text(&tauri_title);
 
-    // Search xcap windows for a matching title
     let windows = Window::all().map_err(|e| format!("Failed to enumerate windows: {}", e))?;
 
-    for win in windows {
-        // xcap::Window::title() returns XCapResult<String>
-        let win_title = win.title().unwrap_or_default();
-        if win_title == title {
-            return Ok(win);
-        }
+    // 1) Strict title match first.
+    if let Some(win) = windows
+        .iter()
+        .find(|w| normalize_window_text(&w.title().unwrap_or_default()) == expected)
+        .cloned()
+    {
+        return Ok(win);
     }
 
-    let total = Window::all().map(|w| w.len()).unwrap_or(0);
+    // 2) Best-effort scored match for Windows title/app-name variations.
+    let mut best: Option<(i32, Window)> = None;
+    for win in windows.iter().cloned() {
+        let win_title_raw = win.title().unwrap_or_default();
+        let win_app_raw = win.app_name().unwrap_or_default();
+        let win_title = normalize_window_text(&win_title_raw);
+        let win_app = normalize_window_text(&win_app_raw);
+
+        let mut score = 0;
+        if !expected.is_empty() {
+            if win_title.contains(&expected) || expected.contains(&win_title) {
+                score += 80;
+            }
+            if win_app.contains(&expected) {
+                score += 70;
+            }
+            for token in expected.split_whitespace() {
+                if token.len() >= 2 && (win_title.contains(token) || win_app.contains(token)) {
+                    score += 15;
+                }
+            }
+        }
+        if win_title.contains("code edit video") || win_app.contains("code edit video") {
+            score += 60;
+        }
+        if win_app.contains("code-edit-video") || win_app.contains("code_edit_video") {
+            score += 60;
+        }
+        if win.is_focused().unwrap_or(false) {
+            score += 10;
+        }
+        if !win.is_minimized().unwrap_or(false) {
+            score += 5;
+        }
+
+        if score > 0 && best.as_ref().map(|(s, _)| score > *s).unwrap_or(true) {
+            best = Some((score, win));
+        }
+    }
+    if let Some((_, win)) = best {
+        return Ok(win);
+    }
+
+    let details = windows
+        .iter()
+        .take(8)
+        .map(|w| {
+            let title = w.title().unwrap_or_else(|_| "<title-error>".to_string());
+            let app = w.app_name().unwrap_or_else(|_| "<app-error>".to_string());
+            format!("\"{}\" (app: \"{}\")", title, app)
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+
     Err(format!(
-        "Could not find window with title: '{}'. Found {} total windows.",
-        title, total,
+        "Could not find app window. Tauri title='{}'. Found {} windows. Top candidates: [{}]",
+        tauri_title,
+        windows.len(),
+        details
     )
     .into())
+}
+
+fn normalize_window_text(input: &str) -> String {
+    input
+        .trim()
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Show a save-file dialog and return the chosen path.
