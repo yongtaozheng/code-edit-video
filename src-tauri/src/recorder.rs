@@ -1,27 +1,13 @@
 use crate::encoder::Mp4Encoder;
 use crate::RecordingEvent;
+use image::RgbaImage;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::ipc::Channel;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
-use xcap::Window;
-
-/// Wrapper to make `xcap::Window` Send-safe.
-///
-/// On Windows, `xcap::Window` contains an `HWND` (`*mut c_void`) which is
-/// not `Send`. However, we only ever use the window from a single blocking
-/// thread after moving it there, so this is safe.
-struct SendableWindow(Window);
-unsafe impl Send for SendableWindow {}
-
-impl std::ops::Deref for SendableWindow {
-    type Target = Window;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
+use xcap::Monitor;
 
 /// Global flag: is a recording currently in progress?
 static RECORDING_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -34,10 +20,12 @@ static RESULT_RECEIVER: Mutex<Option<tokio::sync::oneshot::Receiver<String>>> = 
 
 /// Start recording the Tauri application window.
 ///
-/// 1. Finds the Tauri window via xcap (matches by window title)
-/// 2. Opens a save dialog for the output MP4 path
-/// 3. Spawns a background thread running the capture loop
-/// 4. Sends progress events to the frontend via Tauri Channel
+/// Captures the app window by taking a full monitor screenshot and cropping to
+/// the window's inner (client/WebView2) area.
+///
+/// On Windows, xcap's Window::all() excludes the current process's own windows,
+/// so window.capture_image() cannot be used to capture a Tauri app window.
+/// Using monitor capture + crop avoids this limitation entirely.
 pub async fn start_recording(
     app: tauri::AppHandle,
     fps: u32,
@@ -50,15 +38,11 @@ pub async fn start_recording(
 
     let fps = fps.clamp(1, 60);
 
-    // Find the Tauri window using xcap
-    let xcap_window = find_app_window(&app)?;
-
     // Open save dialog
     let save_path = get_save_path(&app)?;
 
     // Take an initial capture to determine dimensions
-    let first_frame = xcap_window
-        .capture_image()
+    let first_frame = capture_app_window(&app)
         .map_err(|e| format!("Initial capture failed: {}", e))?;
     let width = first_frame.width();
     let height = first_frame.height();
@@ -86,13 +70,13 @@ pub async fn start_recording(
     // Notify frontend that recording has started
     let _ = on_progress.send(RecordingEvent::Started);
 
-    // Wrap xcap::Window in a Send-safe wrapper for the blocking thread
-    let sendable_window = SendableWindow(xcap_window);
+    // Clone AppHandle for the background thread (AppHandle is Clone + Send + Sync)
+    let app_clone = app.clone();
 
     // Spawn the capture loop on a blocking thread (does CPU-intensive work)
     let recording_start = Instant::now();
     tokio::task::spawn_blocking(move || {
-        let result = capture_loop(&sendable_window, &mut encoder, fps, stop_rx, &on_progress);
+        let result = capture_loop(&app_clone, &mut encoder, fps, stop_rx, &on_progress);
         let actual_duration = recording_start.elapsed().as_secs_f64();
 
         match result {
@@ -174,7 +158,7 @@ pub async fn stop_recording() -> Result<String, Box<dyn std::error::Error + Send
 /// so we always encode — this ensures frame_count == elapsed_time × fps,
 /// which is required for minimp4's fixed-fps muxing.
 fn capture_loop(
-    window: &SendableWindow,
+    app: &tauri::AppHandle,
     encoder: &mut Mp4Encoder,
     fps: u32,
     mut stop_rx: tokio::sync::oneshot::Receiver<()>,
@@ -199,7 +183,7 @@ fn capture_loop(
         }
 
         // Capture and encode every frame (CFR — constant frame rate)
-        match window.capture_image() {
+        match capture_app_window(app) {
             Ok(frame) => {
                 if let Err(e) = encoder.encode_frame(&frame) {
                     log::warn!("Frame encode error: {}", e);
@@ -231,97 +215,100 @@ fn capture_loop(
     Ok(())
 }
 
-/// Find the application's own window via xcap by matching the window title.
-fn find_app_window(
+/// Capture the app's inner (client/WebView2) area via monitor screenshot + crop.
+///
+/// # Why monitor capture instead of window capture?
+///
+/// xcap's `Window::all()` on Windows explicitly excludes windows that belong to
+/// the current process (`GetCurrentProcessId()` check in `is_valid_window`).
+/// This means `Window::capture_image()` is unavailable for a Tauri app capturing
+/// itself.
+///
+/// Instead, we:
+/// 1. Get the window's inner (WebView2 content) position and size from Tauri.
+///    `inner_position()` / `inner_size()` return physical-pixel coordinates,
+///    excluding the native title bar and window borders.
+/// 2. Find the monitor that contains the window center.
+/// 3. Capture the full monitor (uses GDI BitBlt on the DWM-composited desktop,
+///    which correctly includes hardware-accelerated WebView2 content).
+/// 4. Crop to the window's inner bounds.
+fn capture_app_window(
     app: &tauri::AppHandle,
-) -> Result<Window, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<RgbaImage, Box<dyn std::error::Error + Send + Sync>> {
     let tauri_win = app
         .get_webview_window("main")
         .ok_or("Tauri main window not found")?;
-    let tauri_title = tauri_win.title().unwrap_or_default();
-    let expected = normalize_window_text(&tauri_title);
 
-    let windows = Window::all().map_err(|e| format!("Failed to enumerate windows: {}", e))?;
+    // Use inner position/size (client area = WebView2 content, no title bar/borders)
+    let pos = tauri_win
+        .inner_position()
+        .map_err(|e| format!("Failed to get window inner position: {}", e))?;
+    let size = tauri_win
+        .inner_size()
+        .map_err(|e| format!("Failed to get window inner size: {}", e))?;
 
-    // 1) Strict title match first.
-    if let Some(win) = windows
+    let win_x = pos.x;
+    let win_y = pos.y;
+    let win_w = size.width;
+    let win_h = size.height;
+
+    if win_w == 0 || win_h == 0 {
+        return Err("Window has zero size".into());
+    }
+
+    // Find the monitor that contains the window center.
+    // Fallback to primary monitor, then to the first available monitor.
+    let center_x = win_x.saturating_add((win_w / 2) as i32);
+    let center_y = win_y.saturating_add((win_h / 2) as i32);
+
+    let monitors = Monitor::all()
+        .map_err(|e| format!("Failed to enumerate monitors: {}", e))?;
+
+    let monitor_idx = monitors
         .iter()
-        .find(|w| normalize_window_text(&w.title().unwrap_or_default()) == expected)
-        .cloned()
-    {
-        return Ok(win);
-    }
-
-    // 2) Best-effort scored match for Windows title/app-name variations.
-    let mut best: Option<(i32, Window)> = None;
-    for win in windows.iter().cloned() {
-        let win_title_raw = win.title().unwrap_or_default();
-        let win_app_raw = win.app_name().unwrap_or_default();
-        let win_title = normalize_window_text(&win_title_raw);
-        let win_app = normalize_window_text(&win_app_raw);
-
-        let mut score = 0;
-        if !expected.is_empty() {
-            if win_title.contains(&expected) || expected.contains(&win_title) {
-                score += 80;
-            }
-            if win_app.contains(&expected) {
-                score += 70;
-            }
-            for token in expected.split_whitespace() {
-                if token.len() >= 2 && (win_title.contains(token) || win_app.contains(token)) {
-                    score += 15;
-                }
-            }
-        }
-        if win_title.contains("code edit video") || win_app.contains("code edit video") {
-            score += 60;
-        }
-        if win_app.contains("code-edit-video") || win_app.contains("code_edit_video") {
-            score += 60;
-        }
-        if win.is_focused().unwrap_or(false) {
-            score += 10;
-        }
-        if !win.is_minimized().unwrap_or(false) {
-            score += 5;
-        }
-
-        if score > 0 && best.as_ref().map(|(s, _)| score > *s).unwrap_or(true) {
-            best = Some((score, win));
-        }
-    }
-    if let Some((_, win)) = best {
-        return Ok(win);
-    }
-
-    let details = windows
-        .iter()
-        .take(8)
-        .map(|w| {
-            let title = w.title().unwrap_or_else(|_| "<title-error>".to_string());
-            let app = w.app_name().unwrap_or_else(|_| "<app-error>".to_string());
-            format!("\"{}\" (app: \"{}\")", title, app)
+        .position(|m| {
+            let mx = m.x().unwrap_or(0);
+            let my = m.y().unwrap_or(0);
+            let mw = m.width().unwrap_or(0) as i32;
+            let mh = m.height().unwrap_or(0) as i32;
+            center_x >= mx && center_x < mx + mw && center_y >= my && center_y < my + mh
         })
-        .collect::<Vec<_>>()
-        .join(", ");
+        // Fallback: primary monitor
+        .or_else(|| monitors.iter().position(|m| m.is_primary().unwrap_or(false)))
+        // Fallback: first monitor
+        .unwrap_or(0);
 
-    Err(format!(
-        "Could not find app window. Tauri title='{}'. Found {} windows. Top candidates: [{}]",
-        tauri_title,
-        windows.len(),
-        details
-    )
-    .into())
-}
+    let monitor = monitors.get(monitor_idx).ok_or("No monitors available")?;
 
-fn normalize_window_text(input: &str) -> String {
-    input
-        .trim()
-        .to_ascii_lowercase()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    // Capture the full monitor screenshot.
+    // xcap uses GDI BitBlt on the DWM desktop window DC, which reads the
+    // composited framebuffer and correctly captures WebView2 content.
+    let screen = monitor
+        .capture_image()
+        .map_err(|e| format!("Monitor capture failed: {}", e))?;
+
+    // Compute the window's position relative to the monitor's captured image.
+    // Both Tauri's inner_position() and xcap's Monitor::x()/y() use physical
+    // pixel screen coordinates on DPI-aware processes (which Tauri 2 is).
+    let mon_x = monitor.x().unwrap_or(0);
+    let mon_y = monitor.y().unwrap_or(0);
+
+    let rel_x = (win_x - mon_x).max(0) as u32;
+    let rel_y = (win_y - mon_y).max(0) as u32;
+
+    // Clamp crop dimensions to stay within the captured image bounds
+    let avail_w = screen.width().saturating_sub(rel_x);
+    let avail_h = screen.height().saturating_sub(rel_y);
+    let crop_w = win_w.min(avail_w);
+    let crop_h = win_h.min(avail_h);
+
+    if crop_w == 0 || crop_h == 0 {
+        return Err("Window bounds are outside monitor area".into());
+    }
+
+    Ok(image::DynamicImage::ImageRgba8(screen)
+        .crop_imm(rel_x, rel_y, crop_w, crop_h)
+        .to_rgba8())
 }
 
 /// Show a save-file dialog and return the chosen path.
