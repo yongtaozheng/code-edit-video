@@ -12,6 +12,7 @@ import { useContentSplit } from '../composables/useContentSplit'
 import { useSlotConfig } from '../composables/useSlotConfig'
 import { useEditorScroll } from '../composables/useEditorScroll'
 import { useKeyboardHandler } from '../composables/useKeyboardHandler'
+import { useFontSize } from '../composables/useFontSize'
 
 // Sub-components
 import TypingControlBar from './CodeDisplay/TypingControlBar.vue'
@@ -20,6 +21,7 @@ import SplitModal from './CodeDisplay/SplitModal.vue'
 import SlotConfigModal from './CodeDisplay/SlotConfigModal.vue'
 import PreviewPanel from './CodeDisplay/PreviewPanel.vue'
 import ThemeSelector from './CodeDisplay/ThemeSelector.vue'
+import FontSizeControl from './CodeDisplay/FontSizeControl.vue'
 
 // Initialize highlight.js languages
 initHighlighter()
@@ -32,6 +34,9 @@ const lastSavedCode = ref('')
 const isDocumentSaved = ref(true)
 
 // ==================== Composable Initialization ====================
+
+const fontSizeCtrl = useFontSize()
+fontSizeCtrl.initFontSize()
 
 const recording = useRecording()
 
@@ -52,6 +57,7 @@ const editorScroll = useEditorScroll({
   slotExecOrder: typingEngine.slotExecOrder,
   frameworkSlots: typingEngine.frameworkSlots,
   currentSlotCharIndex: typingEngine.currentSlotCharIndex,
+  lineHeight: fontSizeCtrl.lineHeight,
 })
 
 // Now wire the late-bound scroll function
@@ -84,6 +90,9 @@ const keyboard = useKeyboardHandler({
   typeManualChunk: typingEngine.typeManualChunk,
   togglePause: typingEngine.togglePause,
   requestSavePreview: handleSavePreview,
+  zoomIn: fontSizeCtrl.zoomIn,
+  zoomOut: fontSizeCtrl.zoomOut,
+  resetFontSize: fontSizeCtrl.resetFontSize,
 })
 
 watch(code, (newCode) => {
@@ -213,6 +222,7 @@ onUnmounted(() => {
         </button>
 
         <ThemeSelector />
+        <FontSizeControl />
 
         <span class="lang-badge">HTML</span>
         <span class="save-status" :class="{ unsaved: !isDocumentSaved }">
@@ -649,9 +659,9 @@ onUnmounted(() => {
 }
 
 .line-num {
-  height: 22px;
-  line-height: 22px;
-  font-size: 13px;
+  height: var(--editor-line-height, 22px);
+  line-height: var(--editor-line-height, 22px);
+  font-size: var(--editor-line-num-font-size, 13px);
   font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
   color: var(--editor-line-number);
   text-align: right;
@@ -674,8 +684,8 @@ onUnmounted(() => {
   margin: 0;
   padding: 16px;
   font-family: ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
-  font-size: 14px;
-  line-height: 22px;
+  font-size: var(--editor-font-size, 14px);
+  line-height: var(--editor-line-height, 22px);
   tab-size: 2;
   white-space: pre;
   overflow: auto;

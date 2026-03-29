@@ -26,6 +26,9 @@ export function useTypingEngine(options: {
   const manualCharsPerKey = ref(1)
   const lineActions = ref<LineAction[]>([])
 
+  // Flag to skip action check on the first char after resuming from [pause]
+  const justResumed = ref(false)
+
   // Framework mode state
   const isFrameworkMode = ref(false)
   const frameworkBase = ref('')
@@ -207,25 +210,36 @@ export function useTypingEngine(options: {
 
     if (!isTyping.value || isPaused.value) return
     if (currentIndex.value >= targetCode.value.length) {
+      // Fire any pending save actions for the last line (lineEnd may equal length when
+      // there is no trailing newline, which was clamped by the parser)
+      if (lineActions.value.some(a => a.type === 'save' && a.lineEnd >= currentIndex.value - 1)) {
+        triggerSaveIfNeeded()
+      }
       isTyping.value = false
       typingComplete.value = true
       options.onTypingComplete()
       return
     }
 
-    const action = getActionAtIndex(currentIndex.value, lineActions.value)
-    if (action) {
-      if (action.type === 'pause') {
-        isPaused.value = true
-        return
-      }
-      if (action.type === 'quick') {
-        const lineContent = targetCode.value.substring(action.lineStart, action.lineEnd + 1)
-        code.value += lineContent
-        currentIndex.value = action.lineEnd + 1
-        options.scrollToCursor()
-        typingTimer.value = setTimeout(typeNextChar, 50)
-        return
+    // Skip action check on the first char after resuming from [pause]
+    const shouldCheckActions = !justResumed.value
+    justResumed.value = false
+
+    if (shouldCheckActions) {
+      const action = getActionAtIndex(currentIndex.value, lineActions.value)
+      if (action) {
+        if (action.type === 'pause') {
+          isPaused.value = true
+          return
+        }
+        if (action.type === 'quick') {
+          const lineContent = targetCode.value.substring(action.lineStart, action.lineEnd + 1)
+          code.value += lineContent
+          currentIndex.value = action.lineEnd + 1
+          options.scrollToCursor()
+          typingTimer.value = setTimeout(typeNextChar, 50)
+          return
+        }
       }
     }
 
@@ -306,21 +320,58 @@ export function useTypingEngine(options: {
     const char = currentSlot.content[currentSlotCharIndex.value]
     currentSlotCharIndex.value++
 
-    // 换行后，将下一行的前导空格一次性输入
+    // 换行后，处理下一行的行标记指令，再一次性输入前导空格
     if (char === '\n') {
+      // Check for [pause] action on the next line (before space-skip)
+      if (!justResumed.value) {
+        const pauseAction = currentSlot.actions?.find(
+          a => a.type === 'pause' && a.lineStartOffset === currentSlotCharIndex.value
+        )
+        if (pauseAction) {
+          code.value = buildCodeFromSlots()
+          options.scrollToCursor()
+          isPaused.value = true
+          return
+        }
+      }
+      justResumed.value = false
+
+      // Skip leading whitespace
       while (
         currentSlotCharIndex.value < currentSlot.content.length &&
         (currentSlot.content[currentSlotCharIndex.value] === ' ' || currentSlot.content[currentSlotCharIndex.value] === '\t')
       ) {
         currentSlotCharIndex.value++
       }
+
+      // Check for [quick] action on this line — type the rest of the line instantly
+      const quickAction = currentSlot.actions?.find(
+        a => a.type === 'quick' &&
+          currentSlotCharIndex.value >= a.lineStartOffset &&
+          currentSlotCharIndex.value < a.lineEndOffset
+      )
+      if (quickAction) {
+        currentSlotCharIndex.value = quickAction.lineEndOffset
+        code.value = buildCodeFromSlots()
+        options.scrollToCursor()
+        typingTimer.value = setTimeout(typeNextSlotChar, 50)
+        return
+      }
     }
+
+    // Check for [save] action — trigger when we've just typed the \n at lineEndOffset
+    const typedOffset = currentSlotCharIndex.value - 1
+    const saveAction = currentSlot.actions?.find(
+      a => a.type === 'save' && a.lineEndOffset === typedOffset
+    )
 
     const nextChar = currentSlot.content[currentSlotCharIndex.value] || ''
 
     code.value = buildCodeFromSlots()
     options.scrollToCursor()
-    if (char === '}' && isCssSlot(actualSlotIdx)) {
+    if (saveAction) {
+      triggerSaveIfNeeded()
+    } else if (char === '}' && isCssSlot(actualSlotIdx)) {
       triggerSaveIfNeeded()
     }
 
@@ -444,18 +495,37 @@ export function useTypingEngine(options: {
 
       currentSlotCharIndex.value++
       const char = currentSlot.content[currentSlotCharIndex.value - 1]
+      const typedOffset = currentSlotCharIndex.value - 1
 
-      // 换行后，将下一行的前导空格一次性输入（不计入本次按键字符数）
+      // 换行后，处理行标记指令，再一次性输入前导空格（不计入本次按键字符数）
       if (char === '\n') {
+        // Check for [pause] on the next line (manual mode: acknowledge and continue)
+        // Check for [quick] on the next line: type the rest of the line instantly
+        // Skip leading whitespace first
         while (
           currentSlotCharIndex.value < currentSlot.content.length &&
           (currentSlot.content[currentSlotCharIndex.value] === ' ' || currentSlot.content[currentSlotCharIndex.value] === '\t')
         ) {
           currentSlotCharIndex.value++
         }
+
+        const quickAction = currentSlot.actions?.find(
+          a => a.type === 'quick' &&
+            currentSlotCharIndex.value >= a.lineStartOffset &&
+            currentSlotCharIndex.value < a.lineEndOffset
+        )
+        if (quickAction) {
+          currentSlotCharIndex.value = quickAction.lineEndOffset
+        }
       }
 
-      if (char === '}' && isCssSlot(actualSlotIdx)) {
+      // Check for [save] action — trigger when we've typed the \n at lineEndOffset
+      const saveAction = currentSlot.actions?.find(
+        a => a.type === 'save' && a.lineEndOffset === typedOffset
+      )
+      if (saveAction) {
+        shouldSaveAfterBuild = true
+      } else if (char === '}' && isCssSlot(actualSlotIdx)) {
         shouldSaveAfterBuild = true
       }
     }
@@ -555,6 +625,7 @@ export function useTypingEngine(options: {
   function resumeTyping() {
     if (!isTyping.value || !isPaused.value) return
     isPaused.value = false
+    justResumed.value = true
     if (typingMode.value === 'auto') {
       if (isFrameworkMode.value) {
         typeNextSlotChar()

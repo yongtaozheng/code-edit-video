@@ -8,11 +8,20 @@ export interface LineAction {
   cleanLine: string
 }
 
+export interface SlotAction {
+  type: 'pause' | 'quick' | 'save'
+  /** Offset of the first character of this line inside slot content (right after the preceding \n) */
+  lineStartOffset: number
+  /** Offset of the \n at the end of this line inside slot content */
+  lineEndOffset: number
+}
+
 export interface FrameworkSlot {
   content: string
   insertPosition: number
   order: number
   pauseAfter: boolean
+  actions: SlotAction[]
 }
 
 export interface SplitResult {

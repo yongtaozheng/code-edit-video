@@ -1,4 +1,4 @@
-import { ref, computed, nextTick, type Ref } from 'vue'
+import { ref, computed, nextTick, type Ref, type ComputedRef } from 'vue'
 import type { FrameworkSlot } from '../types'
 
 export function useEditorScroll(options: {
@@ -8,6 +8,7 @@ export function useEditorScroll(options: {
   slotExecOrder: Ref<number[]>
   frameworkSlots: Ref<FrameworkSlot[]>
   currentSlotCharIndex: Ref<number>
+  lineHeight?: ComputedRef<number>
 }) {
   const { code, isFrameworkMode, currentSlotIndex, slotExecOrder, frameworkSlots, currentSlotCharIndex } = options
 
@@ -69,7 +70,7 @@ export function useEditorScroll(options: {
         targetLine = code.value.split('\n').length
       }
 
-      const lineHeight = 22
+      const lineHeight = options.lineHeight?.value ?? 22
       const targetScrollTop = Math.max(0, (targetLine * lineHeight) - 200)
 
       if (textareaRef.value) {

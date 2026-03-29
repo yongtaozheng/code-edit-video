@@ -11,6 +11,9 @@ export function useKeyboardHandler(options: {
   typeManualChunk: () => void
   togglePause: () => void
   requestSavePreview?: () => void
+  zoomIn?: () => void
+  zoomOut?: () => void
+  resetFontSize?: () => void
 }) {
   function handleGlobalKeydown(e: KeyboardEvent) {
     // Escape closes modal
@@ -21,6 +24,25 @@ export function useKeyboardHandler(options: {
 
     // Don't intercept if modal is open
     if (options.showPasteModal.value) return
+
+    // Font size zoom shortcuts: Ctrl+= / Ctrl+- / Ctrl+0
+    if (e.ctrlKey || e.metaKey) {
+      if (e.key === '=' || e.key === '+') {
+        e.preventDefault()
+        options.zoomIn?.()
+        return
+      }
+      if (e.key === '-') {
+        e.preventDefault()
+        options.zoomOut?.()
+        return
+      }
+      if (e.key === '0') {
+        e.preventDefault()
+        options.resetFontSize?.()
+        return
+      }
+    }
 
     // Manual save shortcut: refresh preview
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {

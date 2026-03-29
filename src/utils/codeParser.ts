@@ -1,4 +1,10 @@
-import type { LineAction, FrameworkSlot } from '../types'
+import type { LineAction, FrameworkSlot, SlotAction } from '../types'
+
+/** Regex to detect action markers at the end of a line */
+const ACTION_MATCH_RE = /(?:<!--\s*\[(pause|quick|ignore|save)\]\s*-->|\/\*\s*\[(pause|quick|ignore|save)\]\s*\*\/|(?:\/\/|#)\s*\[(pause|quick|ignore|save)\])\s*$/
+
+/** Regex to strip action markers (including preceding whitespace) from a line */
+const ACTION_STRIP_RE = /\s*(?:<!--\s*\[(pause|quick|ignore|save)\]\s*-->|\/\*\s*\[(pause|quick|ignore|save)\]\s*\*\/|(?:\/\/|#)\s*\[(pause|quick|ignore|save)\])\s*$/
 
 /**
  * Parse action markers from code lines.
@@ -11,11 +17,11 @@ export function parseAndCleanCode(rawCode: string): { cleanCode: string; actions
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    const actionMatch = line.match(/(?:<!--\s*\[(pause|quick|ignore|save)\]\s*-->|\/\*\s*\[(pause|quick|ignore|save)\]\s*\*\/|(?:\/\/|#)\s*\[(pause|quick|ignore|save)\])\s*$/)
+    const actionMatch = line.match(ACTION_MATCH_RE)
 
     if (actionMatch) {
       const actionType = (actionMatch[1] || actionMatch[2] || actionMatch[3]) as 'pause' | 'quick' | 'ignore' | 'save'
-      const cleanLine = line.replace(/\s*(?:<!--\s*\[(pause|quick|ignore|save)\]\s*-->|\/\*\s*\[(pause|quick|ignore|save)\]\s*\*\/|(?:\/\/|#)\s*\[(pause|quick|ignore|save)\])\s*$/, '')
+      const cleanLine = line.replace(ACTION_STRIP_RE, '')
 
       if (actionType === 'ignore') {
         continue
@@ -36,8 +42,19 @@ export function parseAndCleanCode(rawCode: string): { cleanCode: string; actions
     }
   }
 
+  const cleanCode = cleanLines.join('\n')
+
+  // Fix: for the last clean line, lineEnd may point past the end of cleanCode
+  // because charIndex adds +1 for a newline that doesn't exist on the final line.
+  // Clamp lineEnd so save/pause actions on the last line still trigger correctly.
+  for (const action of actions) {
+    if (action.lineEnd >= cleanCode.length) {
+      action.lineEnd = cleanCode.length - 1
+    }
+  }
+
   return {
-    cleanCode: cleanLines.join('\n'),
+    cleanCode,
     actions,
   }
 }
@@ -55,8 +72,50 @@ export function getActionAtIndex(index: number, actions: LineAction[]): LineActi
 }
 
 /**
- * Parse framework code with [slot] markers.
+ * Parse action markers from slot content lines and return cleaned lines + actions.
  */
+function parseSlotLineActions(slotLines: string[]): { cleanLines: string[]; actions: SlotAction[] } {
+  const cleanLines: string[] = []
+  // Map from clean line index to action type
+  const lineActionMap: (('pause' | 'quick' | 'save') | null)[] = []
+
+  for (const line of slotLines) {
+    const actionMatch = line.match(ACTION_MATCH_RE)
+    if (actionMatch) {
+      const actionType = (actionMatch[1] || actionMatch[2] || actionMatch[3]) as 'pause' | 'quick' | 'ignore' | 'save'
+      if (actionType === 'ignore') {
+        continue // skip this line entirely
+      }
+      const cleanLine = line.replace(ACTION_STRIP_RE, '')
+      cleanLines.push(cleanLine)
+      lineActionMap.push(actionType)
+    } else {
+      cleanLines.push(line)
+      lineActionMap.push(null)
+    }
+  }
+
+  // Build SlotAction list with character offsets within the slot content.
+  // Slot content format: '\n' + cleanLines.join('\n') + '\n'
+  const actions: SlotAction[] = []
+  let offset = 1 // skip initial '\n'
+  for (let j = 0; j < cleanLines.length; j++) {
+    const lineStartOffset = offset
+    const lineEndOffset = offset + cleanLines[j].length // position of '\n' after this line
+    offset = lineEndOffset + 1 // skip past the '\n'
+
+    if (lineActionMap[j]) {
+      actions.push({
+        type: lineActionMap[j]!,
+        lineStartOffset,
+        lineEndOffset,
+      })
+    }
+  }
+
+  return { cleanLines, actions }
+}
+
 export function parseFrameworkCode(rawCode: string): {
   framework: string
   slots: FrameworkSlot[]
@@ -97,7 +156,8 @@ export function parseFrameworkCode(rawCode: string): {
 
     if (slotEndRe.test(line)) {
       if (inSlot && currentSlotLines.length > 0) {
-        const content = '\n' + currentSlotLines.join('\n') + '\n'
+        const { cleanLines: cleanSlotLines, actions: slotActions } = parseSlotLineActions(currentSlotLines)
+        const content = '\n' + cleanSlotLines.join('\n') + '\n'
         const frameworkSoFar = frameworkLines.join('\n')
         const insertPosition = frameworkSoFar.length + (frameworkLines.length > 0 ? 1 : 0)
         slots.push({
@@ -105,6 +165,7 @@ export function parseFrameworkCode(rawCode: string): {
           insertPosition,
           order: currentSlotOrder >= 0 ? currentSlotOrder : positionalIndex,
           pauseAfter: currentSlotPauseAfter,
+          actions: slotActions,
         })
         positionalIndex++
       }
@@ -120,7 +181,8 @@ export function parseFrameworkCode(rawCode: string): {
   }
 
   if (inSlot && currentSlotLines.length > 0) {
-    const content = '\n' + currentSlotLines.join('\n') + '\n'
+    const { cleanLines: cleanSlotLines, actions: slotActions } = parseSlotLineActions(currentSlotLines)
+    const content = '\n' + cleanSlotLines.join('\n') + '\n'
     const frameworkSoFar = frameworkLines.join('\n')
     const insertPosition = frameworkSoFar.length + (frameworkLines.length > 0 ? 1 : 0)
     slots.push({
@@ -128,6 +190,7 @@ export function parseFrameworkCode(rawCode: string): {
       insertPosition,
       order: currentSlotOrder >= 0 ? currentSlotOrder : positionalIndex,
       pauseAfter: currentSlotPauseAfter,
+      actions: slotActions,
     })
   }
 
