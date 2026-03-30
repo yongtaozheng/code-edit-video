@@ -13,6 +13,7 @@ import { useSlotConfig } from '../composables/useSlotConfig'
 import { useEditorScroll } from '../composables/useEditorScroll'
 import { useKeyboardHandler } from '../composables/useKeyboardHandler'
 import { useFontSize } from '../composables/useFontSize'
+import { useAutoUpdate } from '../composables/useAutoUpdate'
 
 // Sub-components
 import TypingControlBar from './CodeDisplay/TypingControlBar.vue'
@@ -22,6 +23,7 @@ import SlotConfigModal from './CodeDisplay/SlotConfigModal.vue'
 import PreviewPanel from './CodeDisplay/PreviewPanel.vue'
 import ThemeSelector from './CodeDisplay/ThemeSelector.vue'
 import FontSizeControl from './CodeDisplay/FontSizeControl.vue'
+import UpdateNotification from './CodeDisplay/UpdateNotification.vue'
 
 // Initialize highlight.js languages
 initHighlighter()
@@ -39,6 +41,7 @@ const fontSizeCtrl = useFontSize()
 fontSizeCtrl.initFontSize()
 
 const recording = useRecording()
+const autoUpdate = useAutoUpdate()
 
 // Late-bind scrollToCursor to break circular dependency
 let scrollToCursorFn: () => void = () => {}
@@ -224,6 +227,24 @@ onUnmounted(() => {
         <ThemeSelector />
         <FontSizeControl />
 
+        <!-- Check Update Button -->
+        <button
+          class="update-check-btn"
+          :class="{ 'has-update': autoUpdate.updateAvailable.value }"
+          @click="autoUpdate.checkForUpdate"
+          :disabled="autoUpdate.checking.value"
+          title="检查更新"
+        >
+          <svg
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"
+            :class="{ spinning: autoUpdate.checking.value }"
+          >
+            <polyline points="23 4 23 10 17 10" />
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+          </svg>
+          <span v-if="autoUpdate.updateAvailable.value" class="update-dot"></span>
+        </button>
+
         <span class="lang-badge">HTML</span>
         <span class="save-status" :class="{ unsaved: !isDocumentSaved }">
           <span class="save-status-dot"></span>
@@ -366,6 +387,17 @@ onUnmounted(() => {
       @close="contentSplit.closeSplitModal"
       @copy-split-section="contentSplit.copySplitSection"
       @open-in-code-pen="contentSplit.openInCodePen"
+    />
+
+    <!-- Update Notification -->
+    <UpdateNotification
+      :update-available="autoUpdate.updateAvailable.value"
+      :latest-version="autoUpdate.latestVersion.value"
+      :current-version="autoUpdate.currentVersion.value"
+      :checking="autoUpdate.checking.value"
+      @dismiss="autoUpdate.dismissUpdate"
+      @open-release="autoUpdate.openReleasePage"
+      @check-update="autoUpdate.checkForUpdate"
     />
 
     <!-- Slot Config Modal -->
@@ -596,6 +628,63 @@ onUnmounted(() => {
 .slot-config-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* Update Check Button */
+.update-check-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--editor-border);
+  background: rgba(205, 214, 244, 0.05);
+  color: var(--editor-muted);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.update-check-btn:hover:not(:disabled) {
+  background: rgba(137, 180, 250, 0.1);
+  border-color: rgba(137, 180, 250, 0.3);
+  color: #89b4fa;
+}
+
+.update-check-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.update-check-btn.has-update {
+  border-color: rgba(166, 227, 161, 0.4);
+  color: #a6e3a1;
+}
+
+.update-check-btn.has-update:hover {
+  background: rgba(166, 227, 161, 0.1);
+  border-color: rgba(166, 227, 161, 0.5);
+}
+
+.update-check-btn .spinning {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.update-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #a6e3a1;
+  box-shadow: 0 0 6px rgba(166, 227, 161, 0.6);
 }
 
 .lang-badge {
