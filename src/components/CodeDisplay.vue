@@ -357,6 +357,7 @@ onUnmounted(() => {
       :preview-height="resize.previewHeight.value"
       :is-resizing="resize.isResizing.value"
       :preview-mode="preview.previewMode.value"
+      :is-recording="recording.isRecording.value"
       @toggle-preview="preview.togglePreview"
       @toggle-preview-mode="preview.togglePreviewMode"
       @resize-start="resize.onResizeStart"

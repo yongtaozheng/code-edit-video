@@ -9,6 +9,7 @@ const props = defineProps<{
   previewHeight: number
   isResizing: boolean
   previewMode: PreviewMode
+  isRecording: boolean
 }>()
 
 const emit = defineEmits<{
@@ -24,7 +25,9 @@ let lastScriptContent = ''
 let lastHtml = ''
 
 // Throttle state for full srcdoc reloads (expensive operation)
-const SRCDOC_THROTTLE_MS = 500
+const SRCDOC_THROTTLE_BASE_MS = 500
+const SRCDOC_THROTTLE_EXPANDED_MS = 800
+const SRCDOC_THROTTLE_EXPANDED_RECORDING_MS = 1200
 let lastSrcdocTime = 0
 let pendingSrcdocHtml: string | null = null
 let srcdocTimer: ReturnType<typeof setTimeout> | null = null
@@ -103,22 +106,42 @@ function isVisuallyMeaningfulChange(oldScript: string, newScript: string): boole
 }
 
 /**
- * Actually perform the srcdoc swap with a fade transition.
+ * Actually perform the srcdoc swap.
+ *
+ * During recording, especially with enlarged preview, loading fade causes
+ * visible brightness pumping in the final video. So we only enable the
+ * loading state in non-recording compact-preview scenarios.
  */
 function doSrcdocReload(iframe: HTMLIFrameElement, html: string) {
-  iframeLoading.value = true
+  const useLoadingFade = !props.isRecording && !props.previewExpanded
 
-  const onLoad = () => {
-    iframe.removeEventListener('load', onLoad)
-    // Small delay to let the browser paint the new content before fading in
-    requestAnimationFrame(() => {
-      iframeLoading.value = false
-    })
+  if (useLoadingFade) {
+    iframeLoading.value = true
+
+    const onLoad = () => {
+      iframe.removeEventListener('load', onLoad)
+      // Small delay to let the browser paint the new content before fading in
+      requestAnimationFrame(() => {
+        iframeLoading.value = false
+      })
+    }
+    iframe.addEventListener('load', onLoad)
+  } else {
+    iframeLoading.value = false
   }
-  iframe.addEventListener('load', onLoad)
 
   iframe.srcdoc = html
   lastSrcdocTime = Date.now()
+}
+
+function getSrcdocThrottleMs(): number {
+  if (props.previewExpanded && props.isRecording) {
+    return SRCDOC_THROTTLE_EXPANDED_RECORDING_MS
+  }
+  if (props.previewExpanded) {
+    return SRCDOC_THROTTLE_EXPANDED_MS
+  }
+  return SRCDOC_THROTTLE_BASE_MS
 }
 
 /**
@@ -130,10 +153,11 @@ function doSrcdocReload(iframe: HTMLIFrameElement, html: string) {
  * while only rate-limiting the expensive full-page reloads.
  */
 function smoothSrcdocReload(iframe: HTMLIFrameElement, html: string) {
+  const throttleMs = getSrcdocThrottleMs()
   const now = Date.now()
   const elapsed = now - lastSrcdocTime
 
-  if (elapsed >= SRCDOC_THROTTLE_MS) {
+  if (elapsed >= throttleMs) {
     // Cooldown has passed → reload immediately
     if (srcdocTimer) { clearTimeout(srcdocTimer); srcdocTimer = null }
     pendingSrcdocHtml = null
@@ -149,7 +173,7 @@ function smoothSrcdocReload(iframe: HTMLIFrameElement, html: string) {
           pendingSrcdocHtml = null
           doSrcdocReload(iframeRef.value, pending)
         }
-      }, SRCDOC_THROTTLE_MS - elapsed)
+      }, throttleMs - elapsed)
     }
   }
 }
@@ -497,11 +521,11 @@ watch(
   height: 100%;
   border: none;
   background: #fff;
-  transition: opacity 0.15s ease;
+  transition: opacity 0.12s ease;
 }
 
 .preview-iframe.iframe-loading {
-  opacity: 0.6;
+  opacity: 0.94;
 }
 
 @media (max-width: 768px) {
