@@ -547,11 +547,15 @@ watch(
   flex: 1;
   overflow: hidden;
   position: relative;
+  background: #fff;
 }
 
 .preview-iframe {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
   border: none;
   background: #fff;
   opacity: 0;
