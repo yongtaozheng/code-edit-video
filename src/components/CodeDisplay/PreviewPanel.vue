@@ -18,8 +18,10 @@ const emit = defineEmits<{
   togglePreviewMode: []
 }>()
 
-const iframeRef = ref<HTMLIFrameElement | null>(null)
+const iframeRefA = ref<HTMLIFrameElement | null>(null)
+const iframeRefB = ref<HTMLIFrameElement | null>(null)
 const iframeLoading = ref(false)
+const activeIframeKey = ref<'a' | 'b'>('a')
 let initialized = false
 let lastScriptContent = ''
 let lastHtml = ''
@@ -28,6 +30,7 @@ let lastHtml = ''
 const SRCDOC_THROTTLE_BASE_MS = 500
 const SRCDOC_THROTTLE_EXPANDED_MS = 800
 const SRCDOC_THROTTLE_EXPANDED_RECORDING_MS = 1200
+const SRCDOC_THROTTLE_RECORDING_MS = 1000
 let lastSrcdocTime = 0
 let pendingSrcdocHtml: string | null = null
 let srcdocTimer: ReturnType<typeof setTimeout> | null = null
@@ -106,35 +109,49 @@ function isVisuallyMeaningfulChange(oldScript: string, newScript: string): boole
 }
 
 /**
- * Actually perform the srcdoc swap.
+ * Keep current iframe visible while preloading next srcdoc in the hidden iframe,
+ * then atomically swap visibility on load to avoid white-frame flashes.
  *
- * During recording, especially with enlarged preview, loading fade causes
- * visible brightness pumping in the final video. So we only enable the
- * loading state in non-recording compact-preview scenarios.
+ * During recording, even small opacity transitions can look like flicker in
+ * encoded videos, so loading fade is fully disabled while recording.
  */
-function doSrcdocReload(iframe: HTMLIFrameElement, html: string) {
-  const useLoadingFade = !props.isRecording && !props.previewExpanded
+function getActiveIframe(): HTMLIFrameElement | null {
+  return activeIframeKey.value === 'a' ? iframeRefA.value : iframeRefB.value
+}
+
+function getStandbyIframe(): HTMLIFrameElement | null {
+  return activeIframeKey.value === 'a' ? iframeRefB.value : iframeRefA.value
+}
+
+function doSrcdocReload(html: string) {
+  const active = getActiveIframe()
+  const standby = getStandbyIframe()
+  if (!active || !standby) return
+
+  const useLoadingFade = !props.isRecording
 
   if (useLoadingFade) {
     iframeLoading.value = true
-
-    const onLoad = () => {
-      iframe.removeEventListener('load', onLoad)
-      // Small delay to let the browser paint the new content before fading in
-      requestAnimationFrame(() => {
-        iframeLoading.value = false
-      })
-    }
-    iframe.addEventListener('load', onLoad)
   } else {
     iframeLoading.value = false
   }
 
-  iframe.srcdoc = html
+  standby.onload = () => {
+    standby.onload = null
+    requestAnimationFrame(() => {
+      activeIframeKey.value = activeIframeKey.value === 'a' ? 'b' : 'a'
+      iframeLoading.value = false
+    })
+  }
+  standby.srcdoc = html
   lastSrcdocTime = Date.now()
 }
 
 function getSrcdocThrottleMs(): number {
+  if (props.isRecording) {
+    if (props.previewExpanded) return SRCDOC_THROTTLE_EXPANDED_RECORDING_MS
+    return SRCDOC_THROTTLE_RECORDING_MS
+  }
   if (props.previewExpanded && props.isRecording) {
     return SRCDOC_THROTTLE_EXPANDED_RECORDING_MS
   }
@@ -152,7 +169,7 @@ function getSrcdocThrottleMs(): number {
  * This keeps incremental DOM patches (CSS, no-script body) fully real-time
  * while only rate-limiting the expensive full-page reloads.
  */
-function smoothSrcdocReload(iframe: HTMLIFrameElement, html: string) {
+function smoothSrcdocReload(html: string) {
   const throttleMs = getSrcdocThrottleMs()
   const now = Date.now()
   const elapsed = now - lastSrcdocTime
@@ -161,17 +178,17 @@ function smoothSrcdocReload(iframe: HTMLIFrameElement, html: string) {
     // Cooldown has passed → reload immediately
     if (srcdocTimer) { clearTimeout(srcdocTimer); srcdocTimer = null }
     pendingSrcdocHtml = null
-    doSrcdocReload(iframe, html)
+    doSrcdocReload(html)
   } else {
     // Still in cooldown → queue the latest HTML
     pendingSrcdocHtml = html
     if (!srcdocTimer) {
       srcdocTimer = setTimeout(() => {
         srcdocTimer = null
-        if (pendingSrcdocHtml && iframeRef.value) {
+        if (pendingSrcdocHtml && getActiveIframe()) {
           const pending = pendingSrcdocHtml
           pendingSrcdocHtml = null
-          doSrcdocReload(iframeRef.value, pending)
+          doSrcdocReload(pending)
         }
       }, throttleMs - elapsed)
     }
@@ -194,7 +211,7 @@ function smoothSrcdocReload(iframe: HTMLIFrameElement, html: string) {
  *     → incremental DOM update for head + body (no flicker).
  */
 function updatePreview(html: string) {
-  const iframe = iframeRef.value
+  const iframe = getActiveIframe()
   if (!iframe) return
 
   // Skip if the HTML is exactly the same (can happen with debounce)
@@ -211,7 +228,7 @@ function updatePreview(html: string) {
 
     // Check if the change is visually meaningful
     if (!initialized || isVisuallyMeaningfulChange(lastScriptContent, newScriptContent)) {
-      smoothSrcdocReload(iframe, html)
+      smoothSrcdocReload(html)
       lastScriptContent = newScriptContent
       initialized = true
       return
@@ -254,7 +271,7 @@ function updatePreview(html: string) {
   } catch {
     // contentDocument not accessible (srcdoc still loading, or cross-origin)
     // → smooth reload instead of abrupt srcdoc swap
-    smoothSrcdocReload(iframe, html)
+    smoothSrcdocReload(html)
     lastScriptContent = newScriptContent
     initialized = true
   }
@@ -281,7 +298,7 @@ watch(
 <template>
   <div
     class="preview-panel"
-    :class="{ expanded: previewExpanded, resizing: isResizing }"
+    :class="{ expanded: previewExpanded, resizing: isResizing, recording: isRecording }"
     :style="!previewExpanded ? { width: previewWidth + 'px', height: previewHeight + 'px' } : {}"
   >
     <div
@@ -349,10 +366,17 @@ watch(
     </div>
     <div class="preview-body">
       <iframe
-        ref="iframeRef"
+        ref="iframeRefA"
         sandbox="allow-scripts allow-modals allow-same-origin"
         class="preview-iframe"
-        :class="{ 'iframe-loading': iframeLoading }"
+        :class="{ active: activeIframeKey === 'a', 'iframe-loading': iframeLoading && activeIframeKey === 'a' }"
+        title="HTML Preview A"
+      />
+      <iframe
+        ref="iframeRefB"
+        sandbox="allow-scripts allow-modals allow-same-origin"
+        class="preview-iframe"
+        :class="{ active: activeIframeKey === 'b', 'iframe-loading': iframeLoading && activeIframeKey === 'b' }"
         title="HTML Preview"
       />
     </div>
@@ -374,7 +398,15 @@ watch(
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  contain: paint;
+  isolation: isolate;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  will-change: width, height;
 }
 
 .preview-panel.resizing {
@@ -514,18 +546,37 @@ watch(
 .preview-body {
   flex: 1;
   overflow: hidden;
+  position: relative;
 }
 
 .preview-iframe {
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: 0;
   border: none;
   background: #fff;
+  opacity: 0;
+  pointer-events: none;
   transition: opacity 0.12s ease;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+.preview-iframe.active {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .preview-iframe.iframe-loading {
   opacity: 0.94;
+}
+
+.preview-panel.recording .preview-iframe {
+  transition: none;
+}
+
+.preview-panel.recording {
+  transition: none;
+  box-shadow: 0 0 0 rgba(0, 0, 0, 0);
 }
 
 @media (max-width: 768px) {
