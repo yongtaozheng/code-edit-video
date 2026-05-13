@@ -165,13 +165,15 @@ watch(() => props.show, (visible) => {
                 <span class="record-toggle-label">完成自动停录</span>
               </label>
               <label
-                v-if="autoRecord && autoStopRecord"
+                v-if="autoRecord"
                 class="record-toggle record-toggle-sub"
+                :class="{ disabled: !autoStopRecord }"
                 title="手打完成后自动放大预览窗口，停留一段时间后再停止录屏"
               >
                 <input
                   type="checkbox"
                   :checked="autoExpandPreviewOnComplete"
+                  :disabled="!autoStopRecord"
                   @change="emit('update:autoExpandPreviewOnComplete', ($event.target as HTMLInputElement).checked)"
                   class="record-toggle-input"
                 />
@@ -181,8 +183,9 @@ watch(() => props.show, (visible) => {
                 <span class="record-toggle-label">完成放大预览</span>
               </label>
               <label
-                v-if="autoRecord && autoStopRecord"
+                v-if="autoRecord"
                 class="stop-delay-control"
+                :class="{ disabled: !autoStopRecord }"
                 title="手打完成后，停留指定秒数再自动停止录屏"
               >
                 <span class="stop-delay-label">停留秒数</span>
@@ -192,11 +195,15 @@ watch(() => props.show, (visible) => {
                   max="600"
                   step="1"
                   :value="autoStopDelaySeconds"
+                  :disabled="!autoStopRecord"
                   @change="emit('update:autoStopDelaySeconds', Math.max(0, Math.min(600, Math.floor(Number(($event.target as HTMLInputElement).value) || 0))))"
                   class="stop-delay-input"
                 />
                 <span class="stop-delay-unit">s</span>
               </label>
+              <span v-if="autoRecord && !autoStopRecord" class="record-config-hint">
+                开启“完成自动停录”后生效
+              </span>
             </div>
 
             <!-- Mode selection in modal -->
@@ -415,6 +422,16 @@ watch(() => props.show, (visible) => {
   background: rgba(205, 214, 244, 0.03);
 }
 
+.record-toggle.disabled,
+.stop-delay-control.disabled {
+  opacity: 0.45;
+  filter: saturate(0.7);
+}
+
+.record-toggle.disabled {
+  cursor: not-allowed;
+}
+
 .stop-delay-label {
   font-size: 12px;
   font-weight: 600;
@@ -438,10 +455,20 @@ watch(() => props.show, (visible) => {
   border-color: var(--editor-accent);
 }
 
+.stop-delay-input:disabled {
+  cursor: not-allowed;
+}
+
 .stop-delay-unit {
   font-size: 12px;
   color: var(--editor-muted);
   font-family: ui-monospace, 'SF Mono', monospace;
+}
+
+.record-config-hint {
+  font-size: 11px;
+  color: #f9e2af;
+  font-family: system-ui, sans-serif;
 }
 
 .paste-textarea::-webkit-scrollbar { width: 6px; }
