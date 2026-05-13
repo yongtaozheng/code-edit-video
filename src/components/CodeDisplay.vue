@@ -48,7 +48,15 @@ let scrollToCursorFn: () => void = () => {}
 
 const typingEngine = useTypingEngine({
   code,
-  onTypingComplete: () => recording.autoStopRecordingIfNeeded(),
+  onTypingComplete: () => {
+    recording.autoStopRecordingIfNeeded({
+      onDelayStart: () => {
+        if (recording.autoExpandPreviewOnComplete.value && !preview.previewExpanded.value) {
+          preview.togglePreview()
+        }
+      },
+    })
+  },
   scrollToCursor: () => scrollToCursorFn(),
   onSaveRequested: () => handleSavePreview(),
 })
@@ -370,11 +378,15 @@ onUnmounted(() => {
       :typing-mode="typingEngine.typingMode.value"
       :auto-record="recording.autoRecord.value"
       :auto-stop-record="recording.autoStopRecord.value"
+      :auto-expand-preview-on-complete="recording.autoExpandPreviewOnComplete.value"
+      :auto-stop-delay-seconds="recording.autoStopDelaySeconds.value"
       @close="closePasteModal"
       @update:paste-code="pasteCode = $event"
       @update:typing-mode="typingEngine.typingMode.value = $event"
       @update:auto-record="recording.autoRecord.value = $event"
       @update:auto-stop-record="recording.autoStopRecord.value = $event"
+      @update:auto-expand-preview-on-complete="recording.autoExpandPreviewOnComplete.value = $event"
+      @update:auto-stop-delay-seconds="recording.autoStopDelaySeconds.value = $event"
       @start-typing="handleStartTyping"
     />
 

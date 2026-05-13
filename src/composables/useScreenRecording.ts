@@ -9,6 +9,8 @@ export function useScreenRecording() {
   // ==================== Public State ====================
   const autoRecord = ref(false)
   const autoStopRecord = ref(true)
+  const autoExpandPreviewOnComplete = ref(true)
+  const autoStopDelaySeconds = ref(20)
   const isRecording = ref(false)
   const isAutoRecording = ref(false)
   const recordingDuration = ref('00:00')
@@ -22,6 +24,7 @@ export function useScreenRecording() {
   const mediaStream = ref<MediaStream | null>(null)
   const recordingStartTime = ref(0)
   const recordingTimerInterval = ref<ReturnType<typeof setInterval> | null>(null)
+  const autoStopTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 
   // Canvas recording private state
   let captureTimerId: ReturnType<typeof setInterval> | null = null
@@ -98,6 +101,7 @@ export function useScreenRecording() {
   function cleanupRecordingResources() {
     isRecording.value = false
     isAutoRecording.value = false
+    clearAutoStopTimer()
     if (recordingTimerInterval.value) {
       clearInterval(recordingTimerInterval.value)
       recordingTimerInterval.value = null
@@ -110,7 +114,15 @@ export function useScreenRecording() {
     cleanupCanvasResources()
   }
 
+  function clearAutoStopTimer() {
+    if (autoStopTimer.value) {
+      clearTimeout(autoStopTimer.value)
+      autoStopTimer.value = null
+    }
+  }
+
   function stopRecordingAndDownload() {
+    clearAutoStopTimer()
     if (mediaRecorder.value && mediaRecorder.value.state !== 'inactive') {
       mediaRecorder.value.stop()
     } else {
@@ -118,10 +130,24 @@ export function useScreenRecording() {
     }
   }
 
-  function autoStopRecordingIfNeeded() {
-    if (isRecording.value && isAutoRecording.value && autoStopRecord.value) {
+  function autoStopRecordingIfNeeded(options?: { onDelayStart?: () => void }) {
+    if (!isRecording.value || !isAutoRecording.value || !autoStopRecord.value) return
+
+    clearAutoStopTimer()
+    options?.onDelayStart?.()
+
+    const delayMs = Math.max(0, Math.floor(autoStopDelaySeconds.value)) * 1000
+    if (delayMs === 0) {
       stopRecordingAndDownload()
+      return
     }
+
+    autoStopTimer.value = setTimeout(() => {
+      autoStopTimer.value = null
+      if (isRecording.value && isAutoRecording.value && autoStopRecord.value) {
+        stopRecordingAndDownload()
+      }
+    }, delayMs)
   }
 
   // ==================== Mode Detection ====================
@@ -166,6 +192,7 @@ export function useScreenRecording() {
 
   async function startDisplayRecording(auto: boolean): Promise<boolean> {
     try {
+      clearAutoStopTimer()
       const stream = await navigator.mediaDevices.getDisplayMedia({
         video: { displaySurface: 'browser' } as MediaTrackConstraints,
         audio: true,
@@ -266,6 +293,7 @@ export function useScreenRecording() {
     }
 
     try {
+      clearAutoStopTimer()
       // Lazy load html-to-image only when needed
       if (!toCanvasFn) {
         const mod = await import('html-to-image')
@@ -408,6 +436,8 @@ export function useScreenRecording() {
   return {
     autoRecord,
     autoStopRecord,
+    autoExpandPreviewOnComplete,
+    autoStopDelaySeconds,
     isRecording,
     isAutoRecording,
     recordingDuration,

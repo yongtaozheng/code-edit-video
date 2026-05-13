@@ -29,6 +29,8 @@ const props = defineProps<{
   typingMode: TypingMode
   autoRecord: boolean
   autoStopRecord: boolean
+  autoExpandPreviewOnComplete: boolean
+  autoStopDelaySeconds: number
 }>()
 
 const emit = defineEmits<{
@@ -37,6 +39,8 @@ const emit = defineEmits<{
   'update:typingMode': [mode: TypingMode]
   'update:autoRecord': [value: boolean]
   'update:autoStopRecord': [value: boolean]
+  'update:autoExpandPreviewOnComplete': [value: boolean]
+  'update:autoStopDelaySeconds': [value: number]
   startTyping: []
 }>()
 
@@ -159,6 +163,39 @@ watch(() => props.show, (visible) => {
                   <span class="record-toggle-thumb"></span>
                 </span>
                 <span class="record-toggle-label">完成自动停录</span>
+              </label>
+              <label
+                v-if="autoRecord && autoStopRecord"
+                class="record-toggle record-toggle-sub"
+                title="手打完成后自动放大预览窗口，停留一段时间后再停止录屏"
+              >
+                <input
+                  type="checkbox"
+                  :checked="autoExpandPreviewOnComplete"
+                  @change="emit('update:autoExpandPreviewOnComplete', ($event.target as HTMLInputElement).checked)"
+                  class="record-toggle-input"
+                />
+                <span class="record-toggle-track">
+                  <span class="record-toggle-thumb"></span>
+                </span>
+                <span class="record-toggle-label">完成放大预览</span>
+              </label>
+              <label
+                v-if="autoRecord && autoStopRecord"
+                class="stop-delay-control"
+                title="手打完成后，停留指定秒数再自动停止录屏"
+              >
+                <span class="stop-delay-label">停留秒数</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="600"
+                  step="1"
+                  :value="autoStopDelaySeconds"
+                  @change="emit('update:autoStopDelaySeconds', Math.max(0, Math.min(600, Math.floor(Number(($event.target as HTMLInputElement).value) || 0))))"
+                  class="stop-delay-input"
+                />
+                <span class="stop-delay-unit">s</span>
               </label>
             </div>
 
@@ -364,7 +401,47 @@ watch(() => props.show, (visible) => {
 .record-toggles {
   display: flex;
   align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.stop-delay-control {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px dashed var(--editor-border);
+  background: rgba(205, 214, 244, 0.03);
+}
+
+.stop-delay-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--editor-muted);
+  font-family: system-ui, sans-serif;
+}
+
+.stop-delay-input {
+  width: 64px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid var(--editor-border);
+  background: var(--editor-surface-deep);
+  color: var(--editor-text);
+  font-size: 12px;
+  text-align: center;
+  outline: none;
+}
+
+.stop-delay-input:focus {
+  border-color: var(--editor-accent);
+}
+
+.stop-delay-unit {
+  font-size: 12px;
+  color: var(--editor-muted);
+  font-family: ui-monospace, 'SF Mono', monospace;
 }
 
 .paste-textarea::-webkit-scrollbar { width: 6px; }

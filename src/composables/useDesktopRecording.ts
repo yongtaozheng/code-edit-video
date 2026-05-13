@@ -37,6 +37,8 @@ export function useDesktopRecording() {
   // ==================== Public State (same interface as useScreenRecording) ====================
   const autoRecord = ref(false)
   const autoStopRecord = ref(true)
+  const autoExpandPreviewOnComplete = ref(true)
+  const autoStopDelaySeconds = ref(20)
   const isRecording = ref(false)
   const isAutoRecording = ref(false)
   const recordingDuration = ref('00:00')
@@ -47,6 +49,7 @@ export function useDesktopRecording() {
   // ==================== Private State ====================
   const recordingStartTime = ref(0)
   const recordingTimerInterval = ref<ReturnType<typeof setInterval> | null>(null)
+  const autoStopTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 
   // ==================== Helpers ====================
 
@@ -62,9 +65,17 @@ export function useDesktopRecording() {
   function cleanupRecordingResources() {
     isRecording.value = false
     isAutoRecording.value = false
+    clearAutoStopTimer()
     if (recordingTimerInterval.value) {
       clearInterval(recordingTimerInterval.value)
       recordingTimerInterval.value = null
+    }
+  }
+
+  function clearAutoStopTimer() {
+    if (autoStopTimer.value) {
+      clearTimeout(autoStopTimer.value)
+      autoStopTimer.value = null
     }
   }
 
@@ -78,6 +89,7 @@ export function useDesktopRecording() {
   async function startRecording(auto: boolean = false): Promise<boolean> {
     if (isRecording.value) return true
     recordingError.value = ''
+    clearAutoStopTimer()
 
     try {
       // Create a Tauri Channel for receiving progress events from Rust
@@ -136,6 +148,7 @@ export function useDesktopRecording() {
 
   function stopRecordingAndDownload() {
     if (!isRecording.value) return
+    clearAutoStopTimer()
 
     invoke('stop_recording').catch((err: any) => {
       const message = typeof err === 'string' ? err : err?.message || '未知错误'
@@ -144,10 +157,24 @@ export function useDesktopRecording() {
     // Cleanup happens when 'finished' event arrives via the Channel
   }
 
-  function autoStopRecordingIfNeeded() {
-    if (isRecording.value && isAutoRecording.value && autoStopRecord.value) {
+  function autoStopRecordingIfNeeded(options?: { onDelayStart?: () => void }) {
+    if (!isRecording.value || !isAutoRecording.value || !autoStopRecord.value) return
+
+    clearAutoStopTimer()
+    options?.onDelayStart?.()
+
+    const delayMs = Math.max(0, Math.floor(autoStopDelaySeconds.value)) * 1000
+    if (delayMs === 0) {
       stopRecordingAndDownload()
+      return
     }
+
+    autoStopTimer.value = setTimeout(() => {
+      autoStopTimer.value = null
+      if (isRecording.value && isAutoRecording.value && autoStopRecord.value) {
+        stopRecordingAndDownload()
+      }
+    }, delayMs)
   }
 
   async function toggleManualRecording() {
@@ -163,6 +190,8 @@ export function useDesktopRecording() {
   return {
     autoRecord,
     autoStopRecord,
+    autoExpandPreviewOnComplete,
+    autoStopDelaySeconds,
     isRecording,
     isAutoRecording,
     recordingDuration,
