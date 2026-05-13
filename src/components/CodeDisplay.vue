@@ -34,6 +34,8 @@ const showPasteModal = ref(false)
 const pasteCode = ref('')
 const lastSavedCode = ref('')
 const isDocumentSaved = ref(true)
+const START_BUFFER_MS = 2000
+let startTypingTimer: ReturnType<typeof setTimeout> | null = null
 
 // ==================== Composable Initialization ====================
 
@@ -140,14 +142,26 @@ function closePasteModal() {
 
 async function handleStartTyping() {
   if (!pasteCode.value.trim()) return
-  if (recording.autoRecord.value) {
-    const started = await recording.startRecording(true)
-    if (!started) {
-      recording.autoRecord.value = false
-    }
-  }
-  typingEngine.startTyping(pasteCode.value)
+
+  const pendingCode = pasteCode.value
   showPasteModal.value = false
+  pasteCode.value = ''
+
+  if (startTypingTimer) {
+    clearTimeout(startTypingTimer)
+    startTypingTimer = null
+  }
+
+  startTypingTimer = setTimeout(async () => {
+    startTypingTimer = null
+    if (recording.autoRecord.value) {
+      const started = await recording.startRecording(true)
+      if (!started) {
+        recording.autoRecord.value = false
+      }
+    }
+    typingEngine.startTyping(pendingCode)
+  }, START_BUFFER_MS)
 }
 
 function handleSavePreview() {
@@ -172,6 +186,10 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (startTypingTimer) {
+    clearTimeout(startTypingTimer)
+    startTypingTimer = null
+  }
   typingEngine.cleanup()
   resize.cleanup()
   recording.cleanupRecordingResources()
